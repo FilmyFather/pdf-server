@@ -28,7 +28,8 @@ function checkGS() {
 }
 
 app.post('/compress', upload.single('pdf'), async (req, res) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-' + uuidv4().slice(0,8) + '-'));
+  const id = uuidv4().slice(0, 8);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-' + id + '-'));
   const inputPath = path.join(tmpDir, 'input.pdf');
 
   try {
@@ -50,124 +51,168 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
     const originalSize = pdfBuf.length;
     const TOLERANCE = 5 * 1024; // 5KB
 
-    console.log(`Compressing: original=${originalSize}, target=${targetBytes}`);
+    console.log(`[${id}] original=${originalSize}, target=${targetBytes}`);
 
-    // Binary search on DPI: 150 to 600
-    // Higher DPI = better quality = bigger file
-    // We want the HIGHEST DPI that still fits under targetBytes
-    let dpiLo = 150, dpiHi = 600;
+    // Step 1: Try lossless compression first
+    const losslessOut = path.join(tmpDir, 'lossless.pdf');
     let bestOutput = null;
     let bestDiff = Infinity;
 
-    for (let iter = 0; iter < 16; iter++) {
-      const dpiMid = Math.round((dpiLo + dpiHi) / 2);
-      const tmpOut = path.join(tmpDir, `out_${iter}.pdf`);
+    try {
+      execSync(gsLossless(inputPath, losslessOut), { timeout: 30000 });
+      const sz = fs.statSync(losslessOut).size;
+      const diff = targetBytes - sz;
+      console.log(`[${id}] lossless size=${sz}, diff=${diff}`);
+      if (diff >= 0) {
+        bestOutput = fs.readFileSync(losslessOut);
+        bestDiff = diff;
+        if (diff <= TOLERANCE) {
+          console.log(`[${id}] Perfect lossless!`);
+          return sendResult(res, bestOutput, originalSize);
+        }
+      }
+    } catch (e) {
+      console.log(`[${id}] lossless failed:`, e.message);
+    }
+
+    // Step 2: PDF is text-based (size same at all DPIs)
+    // Use ps2pdf with different compression levels via page rendering at fixed sizes
+    // Strategy: render PDF as images at target size using GS raster output, then rebuild
+
+    // Calculate what DPI we need to hit the target
+    // target_size ≈ (width_px * height_px * pages * bytes_per_px_jpeg)
+    // For A4 at 72dpi: 595*842 = ~500k pixels per page
+    // JPEG at quality q: ~0.1-0.5 bytes/pixel
+
+    // Get page count
+    let pageCount = 1;
+    try {
+      const info = execSync(`gs -dNODISPLAY -dNOSAFER -q -c "(${inputPath}) (r) file runpdfbegin pdfpagecount = quit"`, { timeout: 10000 }).toString().trim();
+      pageCount = parseInt(info) || 1;
+    } catch (e) {
+      console.log(`[${id}] Could not get page count, assuming 1`);
+    }
+
+    console.log(`[${id}] pages=${pageCount}`);
+
+    // Binary search on JPEG quality for raster conversion
+    // We render each page as JPEG and rebuild PDF
+    let qLo = 1, qHi = 95;
+
+    for (let iter = 0; iter < 14; iter++) {
+      const qMid = Math.round((qLo + qHi) / 2);
+      const rasterOut = path.join(tmpDir, `raster_${iter}.pdf`);
 
       try {
-        const gsCmd = buildGsCmd(inputPath, tmpOut, dpiMid);
-        execSync(gsCmd, { timeout: 30000 });
+        // Render PDF pages as JPEG images and rebuild PDF
+        // Use GS to convert to JPEG then back to PDF
+        const dpi = 150; // Fixed DPI for text clarity
+        const cmd = [
+          'gs', '-dNOSAFER',
+          '-dNOPAUSE', '-dBATCH', '-dQUIET',
+          '-sDEVICE=pdfwrite',
+          '-dCompatibilityLevel=1.4',
+          `-dPDFSETTINGS=/screen`,
+          '-dColorConversionStrategy=/sRGB',
+          '-dDownsampleColorImages=true',
+          `-dColorImageResolution=${dpi}`,
+          '-dDownsampleGrayImages=true',
+          `-dGrayImageResolution=${dpi}`,
+          '-dDownsampleMonoImages=true',
+          `-dMonoImageResolution=${dpi}`,
+          `-dJPEGQ=${qMid}`,
+          '-dColorImageFilter=/DCTEncode',
+          '-dGrayImageFilter=/DCTEncode',
+          `-sOutputFile=${rasterOut}`,
+          inputPath,
+        ].join(' ');
 
-        const sz = fs.statSync(tmpOut).size;
+        execSync(cmd, { timeout: 30000 });
+        const sz = fs.statSync(rasterOut).size;
         const diff = targetBytes - sz;
-
-        console.log(`  iter=${iter} dpi=${dpiMid} size=${sz} diff=${diff}`);
+        console.log(`[${id}] iter=${iter} q=${qMid} size=${sz} diff=${diff}`);
 
         if (diff >= 0) {
-          // Under target — valid
           if (diff < bestDiff) {
             bestDiff = diff;
-            bestOutput = fs.readFileSync(tmpOut);
+            bestOutput = fs.readFileSync(rasterOut);
           }
-          if (diff <= TOLERANCE) {
-            console.log(`  Perfect at DPI=${dpiMid}, size=${sz}`);
-            break;
-          }
-          // Too small — try higher DPI
-          dpiLo = dpiMid + 1;
+          if (diff <= TOLERANCE) break;
+          qLo = qMid + 1; // Too small, raise quality
         } else {
-          // Over target — try lower DPI
-          dpiHi = dpiMid - 1;
+          qHi = qMid - 1; // Too big, lower quality
         }
       } catch (e) {
-        console.error(`  GS failed at DPI ${dpiMid}:`, e.message);
-        dpiHi = dpiMid - 1;
+        console.error(`[${id}] iter ${iter} failed:`, e.message);
+        qHi = qMid - 1;
       }
 
-      if (dpiLo > dpiHi) break;
+      if (qLo > qHi) break;
     }
 
-    // If nothing found under target at DPI 150, go lower
-    if (!bestOutput) {
-      console.log('Going below 150 DPI...');
-      for (const dpi of [120, 96, 72, 60, 48, 36]) {
-        const tmpOut = path.join(tmpDir, `out_low_${dpi}.pdf`);
+    // Step 3: If still nothing, force very low quality
+    if (!bestOutput || bestDiff > TOLERANCE) {
+      for (const q of [5, 3, 1]) {
+        const out = path.join(tmpDir, `force_${q}.pdf`);
         try {
-          execSync(buildGsCmd(inputPath, tmpOut, dpi), { timeout: 30000 });
-          const sz = fs.statSync(tmpOut).size;
+          const cmd = [
+            'gs', '-dNOPAUSE', '-dBATCH', '-dQUIET',
+            '-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4',
+            '-dPDFSETTINGS=/screen',
+            `-dColorImageResolution=72`,
+            `-dGrayImageResolution=72`,
+            `-dJPEGQ=${q}`,
+            `-sOutputFile=${out}`, inputPath,
+          ].join(' ');
+          execSync(cmd, { timeout: 30000 });
+          const sz = fs.statSync(out).size;
           const diff = targetBytes - sz;
-          console.log(`  low dpi=${dpi} size=${sz}`);
+          console.log(`[${id}] force q=${q} size=${sz} diff=${diff}`);
           if (diff >= 0 && diff < bestDiff) {
             bestDiff = diff;
-            bestOutput = fs.readFileSync(tmpOut);
+            bestOutput = fs.readFileSync(out);
             if (diff <= TOLERANCE) break;
           }
-        } catch (e) { console.error(`low DPI ${dpi} failed:`, e.message); }
+        } catch (e) { console.error(e.message); }
       }
     }
 
     if (!bestOutput) {
-      return res.status(422).json({ error: 'Cannot compress to target size' });
+      return res.status(422).json({ error: 'Cannot compress to target size — PDF may be too small already' });
     }
 
-    console.log(`Final size: ${bestOutput.length} (target: ${targetBytes}, diff: ${targetBytes - bestOutput.length})`);
-
-    res.json({
-      success: true,
-      pdfBase64: bestOutput.toString('base64'),
-      originalSize,
-      compressedSize: bestOutput.length,
-    });
+    console.log(`[${id}] FINAL size=${bestOutput.length} target=${targetBytes} diff=${targetBytes - bestOutput.length}`);
+    return sendResult(res, bestOutput, originalSize);
 
   } catch (err) {
-    console.error('Error:', err);
+    console.error(`[${id}] Error:`, err);
     res.status(500).json({ error: err.message });
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
   }
 });
 
-function buildGsCmd(input, output, dpi) {
-  // Choose quality setting based on DPI
-  let setting;
-  if (dpi >= 300) setting = '/printer';
-  else if (dpi >= 150) setting = '/ebook';
-  else setting = '/screen';
-
+function gsLossless(input, output) {
   return [
-    'gs',
-    '-sDEVICE=pdfwrite',
-    '-dCompatibilityLevel=1.4',
-    `-dPDFSETTINGS=${setting}`,
-    '-dNOPAUSE',
-    '-dQUIET',
-    '-dBATCH',
+    'gs', '-dNOSAFER', '-dNOPAUSE', '-dBATCH', '-dQUIET',
+    '-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4',
+    '-dPDFSETTINGS=/prepress',
     '-dDetectDuplicateImages=true',
-    '-dCompressFonts=true',
-    '-dSubsetFonts=true',
-    '-dDownsampleColorImages=true',
-    `-dColorImageResolution=${dpi}`,
-    '-dColorImageDownsampleType=/Bicubic',
-    '-dDownsampleGrayImages=true',
-    `-dGrayImageResolution=${dpi}`,
-    '-dGrayImageDownsampleType=/Bicubic',
-    '-dDownsampleMonoImages=true',
-    `-dMonoImageResolution=${dpi}`,
-    `-sOutputFile=${output}`,
-    input,
+    '-dCompressFonts=true', '-dSubsetFonts=true',
+    `-sOutputFile=${output}`, input,
   ].join(' ');
 }
 
+function sendResult(res, buf, originalSize) {
+  res.json({
+    success: true,
+    pdfBase64: buf.toString('base64'),
+    originalSize,
+    compressedSize: buf.length,
+  });
+}
+
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server on port ${PORT}`);
   console.log(`Ghostscript: ${checkGS()}`);
 });
