@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>PDF Compressed by Yuvraj</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{
+  --bg:#05070d;
+  --bg1:#080c15;
+  --bg2:#0c1220;
+  --card:#0f1829;
+  --card2:#131f33;
+  --border:#1a2a42;
+  --border2:#1f3350;
+  --a1:#4f8eff;
+  --a2:#00e5ff;
+  --a3:#ff6b35;
+  --a4:#b347ff;
+  --success:#00f5a0;
+  --warn:#ffcc02;
+  --error:#ff4757;
+  --text:#e8f0ff;
+  --text2:#8899bb;
+  --text3:#4a5a7a;
+  --fh:'Outfit',sans-serif;
+  --fm:'Fira Code',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--fh);
+  min-height:100vh;
+  overflow-x:hidden;
+  cursor:default;
+}
+
+/* ── ANIMATED BG ── */
+.bg-layer{
+  position:fixed;inset:0;z-index:0;
+  overflow:hidden;pointer-events:none;
+}
+.orb{
+  position:absolute;border-radius:50%;filter:blur(80px);opacity:0.12;
+  animation:orbFloat 12s ease-in-out infinite;
+}
+.orb1{width:600px;height:600px;background:var(--a1);top:-200px;left:-150px;animation-delay:0s;}
+.orb2{width:500px;height:500px;background:var(--a4);bottom:-150px;right:-100px;animation-delay:-4s;}
+.orb3{width:350px;height:350px;background:var(--a2);top:40%;left:50%;transform:translate(-50%,-50%);animation-delay:-8s;}
+@keyframes orbFloat{
+  0%,100%{transform:translate(0,0) scale(1);}
+  33%{transform:translate(30px,-40px) scale(1.05);}
+  66%{transform:translate(-20px,25px) scale(0.95);}
+}
+
+/* Grid overlay */
+.bg-grid{
+  position:fixed;inset:0;z-index:0;
+  background-image:
+    linear-gradient(rgba(79,142,255,0.04) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(79,142,255,0.04) 1px,transparent 1px);
+  background-size:50px 50px;
+  pointer-events:none;
+}
+
+/* Noise */
+.bg-noise{
+  position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.025;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size:200px;
+}
+
+.wrap{
+  max-width:860px;margin:0 auto;
+  padding:48px 20px 120px;
+  position:relative;z-index:1;
+}
+
+/* ── HEADER ── */
+header{text-align:center;margin-bottom:52px;animation:fadeUp 0.7s ease both;}
+
+.logo-wrap{
+  display:inline-flex;align-items:center;gap:10px;
+  background:linear-gradient(135deg,rgba(79,142,255,0.12),rgba(0,229,255,0.06));
+  border:1px solid rgba(79,142,255,0.2);
+  border-radius:100px;padding:8px 20px;
+  margin-bottom:28px;
+  backdrop-filter:blur(10px);
+}
+.logo-dot{
+  width:9px;height:9px;border-radius:50%;
+  background:var(--a2);
+  box-shadow:0 0 10px var(--a2);
+  animation:dotPulse 2s ease-in-out infinite;
+}
+@keyframes dotPulse{
+  0%,100%{box-shadow:0 0 6px var(--a2);opacity:1;}
+  50%{box-shadow:0 0 20px var(--a2),0 0 40px rgba(0,229,255,0.3);opacity:0.7;}
+}
+.logo-text{
+  font-family:var(--fm);font-size:11px;color:var(--text2);
+  letter-spacing:0.15em;text-transform:uppercase;
+}
+
+h1{
+  font-size:clamp(32px,7vw,68px);
+  font-weight:900;
+  letter-spacing:-0.03em;
+  line-height:1.0;
+  margin-bottom:12px;
+}
+.h1-line1{
+  display:block;color:var(--text);
+}
+.h1-line2{
+  display:block;
+  background:linear-gradient(135deg,var(--a1) 0%,var(--a2) 50%,var(--a4) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  filter:drop-shadow(0 0 30px rgba(79,142,255,0.4));
+}
+.h1-sub{
+  font-size:15px;color:var(--text3);
+  font-family:var(--fm);letter-spacing:0.06em;
+  margin-top:8px;
+}
+
+/* ── TABS ── */
+.tab-wrap{
+  position:relative;margin-bottom:28px;
+  animation:fadeUp 0.7s 0.1s ease both;
+}
+.tab-bar{
+  display:grid;grid-template-columns:repeat(4,1fr);
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:16px;padding:6px;gap:4px;
+  backdrop-filter:blur(20px);
+}
+.tab-btn{
+  padding:13px 8px;border:none;background:none;
+  color:var(--text3);font-family:var(--fh);
+  font-size:12.5px;font-weight:600;
+  letter-spacing:0.03em;text-transform:uppercase;
+  cursor:pointer;border-radius:11px;
+  transition:all 0.3s cubic-bezier(0.4,0,0.2,1);
+  line-height:1.35;position:relative;overflow:hidden;
+}
+.tab-btn::before{
+  content:'';position:absolute;inset:0;border-radius:11px;
+  background:linear-gradient(135deg,var(--a1),var(--a2));
+  opacity:0;transition:opacity 0.3s;
+}
+.tab-btn.active{
+  color:#fff;
+  box-shadow:0 4px 20px rgba(79,142,255,0.35),0 0 0 1px rgba(79,142,255,0.3);
+}
+.tab-btn.active::before{opacity:1;}
+.tab-btn span{position:relative;z-index:1;}
+.tab-btn:not(.active):hover{color:var(--text2);background:rgba(79,142,255,0.06);}
+
+.tab-panel{display:none;animation:fadeUp 0.4s ease both;}
+.tab-panel.active{display:block;}
+
+@keyframes fadeUp{
+  from{opacity:0;transform:translateY(18px);}
+  to{opacity:1;transform:translateY(0);}
+}
+
+/* ── CARD ── */
+.card{
+  background:linear-gradient(135deg,var(--card) 0%,var(--card2) 100%);
+  border:1px solid var(--border);
+  border-radius:20px;padding:28px;
+  margin-bottom:16px;position:relative;overflow:hidden;
+  backdrop-filter:blur(20px);
+  transition:border-color 0.3s;
+}
+.card:hover{border-color:var(--border2);}
+.card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(79,142,255,0.5),transparent);
+}
+
+.slabel{
+  font-family:var(--fm);font-size:10px;color:var(--text3);
+  text-transform:uppercase;letter-spacing:0.18em;margin-bottom:14px;
+  display:flex;align-items:center;gap:8px;
+}
+.slabel::before{content:'';width:16px;height:1px;background:var(--border2);}
+.slabel::after{content:'';flex:1;height:1px;background:var(--border);}
+
+/* ── DROPZONE ── */
+.dropzone{
+  border:2px dashed var(--border2);
+  border-radius:16px;padding:46px 24px;
+  text-align:center;cursor:pointer;
+  position:relative;transition:all 0.3s;
+  background:radial-gradient(ellipse at center,rgba(79,142,255,0.03) 0%,transparent 70%);
+}
+.dropzone:hover,.dropzone.over{
+  border-color:var(--a1);
+  background:radial-gradient(ellipse at center,rgba(79,142,255,0.08) 0%,transparent 70%);
+  box-shadow:0 0 40px rgba(79,142,255,0.1) inset,0 0 0 1px rgba(79,142,255,0.15);
+}
+.dropzone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+
+.dz-ring{
+  width:64px;height:64px;border-radius:50%;
+  background:linear-gradient(135deg,rgba(79,142,255,0.15),rgba(0,229,255,0.08));
+  border:1px solid rgba(79,142,255,0.25);
+  display:flex;align-items:center;justify-content:center;
+  margin:0 auto 16px;font-size:26px;
+  box-shadow:0 0 30px rgba(79,142,255,0.15);
+}
+.dz-title{font-size:17px;font-weight:700;margin-bottom:5px;}
+.dz-sub{font-size:12px;color:var(--text3);font-family:var(--fm);}
+
+/* ── FILE LIST ── */
+.file-list{margin-top:14px;display:flex;flex-direction:column;gap:8px;}
+.file-item{
+  display:flex;align-items:center;gap:12px;
+  background:rgba(79,142,255,0.04);
+  border:1px solid var(--border);border-radius:12px;
+  padding:11px 14px;
+  transition:all 0.2s;
+}
+.file-item:hover{border-color:var(--border2);background:rgba(79,142,255,0.07);}
+.fi-ico{
+  width:36px;height:36px;flex-shrink:0;
+  background:linear-gradient(135deg,var(--a1),var(--a2));
+  border-radius:10px;display:flex;align-items:center;justify-content:center;
+  font-size:15px;box-shadow:0 4px 12px rgba(79,142,255,0.3);
+}
+.fi-info{flex:1;min-width:0;}
+.fi-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.fi-size{font-size:11px;color:var(--text3);font-family:var(--fm);margin-top:2px;}
+.fi-rm{
+  background:none;border:1px solid var(--border);
+  color:var(--text3);cursor:pointer;border-radius:8px;
+  padding:5px 9px;font-size:12px;
+  transition:all 0.2s;flex-shrink:0;font-family:var(--fh);
+}
+.fi-rm:hover{border-color:var(--error);color:var(--error);background:rgba(255,71,87,0.08);}
+
+/* ── SIZE INPUT ── */
+.size-wrap{position:relative;}
+.size-inp{
+  width:100%;
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:16px 90px 16px 18px;
+  color:var(--text);font-size:24px;
+  font-family:var(--fm);font-weight:600;
+  outline:none;transition:all 0.25s;
+  -moz-appearance:textfield;
+}
+.size-inp::-webkit-outer-spin-button,.size-inp::-webkit-inner-spin-button{-webkit-appearance:none;}
+.size-inp:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(79,142,255,0.12);}
+
+.unit-tgl{
+  position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  display:flex;background:var(--bg);
+  border:1px solid var(--border);border-radius:9px;overflow:hidden;
+}
+.ubtn{
+  padding:6px 11px;font-size:12px;font-family:var(--fm);
+  border:none;background:none;color:var(--text3);
+  cursor:pointer;transition:all 0.2s;font-weight:500;
+}
+.ubtn.on{background:linear-gradient(135deg,var(--a1),var(--a2));color:#fff;}
+
+.presets{display:flex;gap:7px;flex-wrap:wrap;margin-top:13px;}
+.pbtn{
+  padding:7px 14px;border:1px solid var(--border);
+  border-radius:100px;background:none;color:var(--text2);
+  font-size:12px;font-family:var(--fm);cursor:pointer;
+  transition:all 0.2s;
+}
+.pbtn:hover{border-color:var(--a1);color:var(--a1);background:rgba(79,142,255,0.08);}
+
+/* ── AUTO BADGE ── */
+.auto-badge{
+  display:inline-flex;align-items:center;gap:8px;
+  background:linear-gradient(135deg,rgba(255,107,53,0.1),rgba(179,71,255,0.08));
+  border:1px solid rgba(255,107,53,0.25);
+  border-radius:100px;padding:7px 16px;
+  font-size:12px;font-family:var(--fm);color:var(--a3);
+  margin-bottom:16px;
+}
+.auto-dot{width:6px;height:6px;border-radius:50%;background:var(--a3);box-shadow:0 0 8px var(--a3);}
+
+/* ── COMPRESS BTN ── */
+.cbtn{
+  width:100%;padding:18px;
+  background:linear-gradient(135deg,var(--a1) 0%,var(--a2) 100%);
+  border:none;border-radius:14px;
+  color:#fff;font-size:16px;font-weight:800;
+  font-family:var(--fh);letter-spacing:0.08em;
+  text-transform:uppercase;cursor:pointer;
+  transition:all 0.3s cubic-bezier(0.4,0,0.2,1);
+  position:relative;overflow:hidden;
+  box-shadow:0 4px 20px rgba(79,142,255,0.3);
+}
+.cbtn::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(255,255,255,0.15),transparent);
+  opacity:0;transition:opacity 0.3s;
+}
+.cbtn:hover:not(:disabled)::after{opacity:1;}
+.cbtn:hover:not(:disabled){
+  transform:translateY(-3px);
+  box-shadow:0 12px 40px rgba(79,142,255,0.45);
+}
+.cbtn:active:not(:disabled){transform:translateY(-1px);}
+.cbtn:disabled{opacity:0.3;cursor:not-allowed;transform:none;box-shadow:none;}
+
+/* ── PROGRESS ── */
+.prog-area{display:none;margin-top:20px;padding:20px;background:var(--card);border:1px solid var(--border);border-radius:14px;}
+.prog-area.show{display:block;}
+.prog-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+.prog-lbl{font-family:var(--fm);font-size:12px;color:var(--text2);}
+.prog-pct{font-family:var(--fm);font-size:13px;color:var(--a2);font-weight:600;}
+.prog-track{height:6px;background:var(--bg2);border-radius:100px;overflow:hidden;}
+.prog-fill{
+  height:100%;
+  background:linear-gradient(90deg,var(--a1),var(--a2));
+  border-radius:100px;
+  transition:width 0.4s cubic-bezier(0.4,0,0.2,1);
+  width:0%;
+  box-shadow:0 0 12px rgba(0,229,255,0.4);
+}
+
+/* ── RESULTS ── */
+.results{display:none;margin-top:16px;}
+.results.show{display:block;}
+
+.res-item{
+  background:linear-gradient(135deg,var(--card),var(--card2));
+  border:1px solid var(--border);
+  border-radius:20px;padding:24px;
+  margin-bottom:14px;position:relative;overflow:hidden;
+}
+.res-item::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--success),transparent);
+}
+
+/* Stats row */
+.stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;}
+.sbox{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:12px;padding:14px 12px;text-align:center;
+  position:relative;overflow:hidden;
+}
+.sbox::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(79,142,255,0.04),transparent);
+}
+.sv{font-size:18px;font-weight:800;font-family:var(--fm);margin-bottom:4px;position:relative;z-index:1;}
+.sv.g{color:var(--success);text-shadow:0 0 15px rgba(0,245,160,0.4);}
+.sv.o{color:var(--a3);text-shadow:0 0 15px rgba(255,107,53,0.3);}
+.sv.b{color:var(--a2);text-shadow:0 0 15px rgba(0,229,255,0.3);}
+.sk{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;position:relative;z-index:1;}
+
+/* Rename */
+.rename-box{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:14px;padding:16px;margin-bottom:14px;
+}
+.rlabel{
+  font-family:var(--fm);font-size:10px;color:var(--text3);
+  text-transform:uppercase;letter-spacing:0.14em;margin-bottom:10px;
+  display:flex;align-items:center;gap:6px;
+}
+.rlabel-icon{font-size:12px;}
+.rrow{
+  display:flex;align-items:center;
+  background:var(--bg);border:1px solid var(--border);
+  border-radius:10px;overflow:hidden;transition:border-color 0.2s;
+}
+.rrow:focus-within{border-color:var(--a1);box-shadow:0 0 0 3px rgba(79,142,255,0.1);}
+.rinput{
+  flex:1;background:none;border:none;outline:none;
+  padding:12px 14px;color:var(--text);
+  font-size:14px;font-family:var(--fm);font-weight:500;min-width:0;
+}
+.rsuffix{
+  padding:12px 14px 12px 0;
+  font-size:13px;font-family:var(--fm);
+  color:var(--a3);white-space:nowrap;flex-shrink:0;font-weight:600;
+}
+.rhint{font-size:11px;color:var(--text3);font-family:var(--fm);margin-top:8px;}
+.rhint .ok{color:var(--success);}
+.rhint .bad{color:var(--error);}
+
+/* Download btn */
+.dlbtn{
+  width:100%;padding:15px;
+  background:linear-gradient(135deg,rgba(0,245,160,0.08),rgba(0,229,255,0.05));
+  border:1px solid rgba(0,245,160,0.3);
+  border-radius:12px;color:var(--success);
+  font-size:15px;font-weight:700;
+  font-family:var(--fh);letter-spacing:0.04em;
+  cursor:pointer;display:flex;align-items:center;
+  justify-content:center;gap:9px;
+  transition:all 0.25s;text-decoration:none;
+}
+.dlbtn:hover{
+  background:linear-gradient(135deg,rgba(0,245,160,0.14),rgba(0,229,255,0.08));
+  box-shadow:0 4px 25px rgba(0,245,160,0.2);
+  transform:translateY(-1px);
+}
+
+/* ZIP btn */
+.zipbtn{
+  width:100%;padding:16px;
+  background:linear-gradient(135deg,var(--a4),#7c3aed);
+  border:none;border-radius:14px;
+  color:#fff;font-size:16px;font-weight:800;
+  font-family:var(--fh);letter-spacing:0.06em;
+  text-transform:uppercase;cursor:pointer;
+  transition:all 0.3s;margin-top:16px;
+  box-shadow:0 4px 20px rgba(179,71,255,0.3);
+  display:none;
+}
+.zipbtn.show{display:block;}
+.zipbtn:hover{transform:translateY(-2px);box-shadow:0 10px 35px rgba(179,71,255,0.45);}
+
+/* Warn / Err */
+.wbox{
+  background:rgba(255,204,2,0.07);border:1px solid rgba(255,204,2,0.2);
+  border-radius:10px;padding:11px 14px;
+  font-size:12px;color:var(--warn);font-family:var(--fm);
+  margin-top:12px;display:none;line-height:1.5;
+}
+.wbox.show{display:block;}
+.ebox{
+  background:rgba(255,71,87,0.07);border:1px solid rgba(255,71,87,0.2);
+  border-radius:10px;padding:11px 14px;
+  font-size:12px;color:var(--error);font-family:var(--fm);
+  margin-top:12px;display:none;
+}
+.ebox.show{display:block;}
+
+/* ── BULK SPECIAL ── */
+.bulk-info{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:12px;
+  margin-bottom:20px;
+}
+.binfo-card{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:12px;padding:14px;text-align:center;
+}
+.binfo-num{font-size:22px;font-weight:800;color:var(--a1);font-family:var(--fm);}
+.binfo-lbl{font-size:11px;color:var(--text3);margin-top:3px;text-transform:uppercase;letter-spacing:0.08em;}
+
+/* ── FOOTER ── */
+footer{
+  text-align:center;margin-top:60px;padding:24px;
+  border-top:1px solid var(--border);position:relative;
+}
+footer::before{
+  content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);
+  width:200px;height:1px;
+  background:linear-gradient(90deg,transparent,var(--a1),transparent);
+}
+.credit{
+  font-family:var(--fm);font-size:13px;color:var(--text3);
+  letter-spacing:0.05em;
+}
+.cheart{
+  color:#ff4757;font-size:15px;
+  animation:heartbeat 1.5s ease-in-out infinite;
+  display:inline-block;
+}
+@keyframes heartbeat{
+  0%,100%{transform:scale(1);}
+  14%{transform:scale(1.25);}
+  28%{transform:scale(1);}
+  42%{transform:scale(1.15);}
+  56%{transform:scale(1);}
+}
+.clink{
+  color:var(--a1);text-decoration:none;font-weight:700;
+  transition:all 0.25s;position:relative;
+}
+.clink::after{
+  content:'';position:absolute;bottom:-2px;left:0;right:0;
+  height:1px;background:linear-gradient(90deg,var(--a1),var(--a2));
+  transform:scaleX(0);transition:transform 0.3s;
+}
+.clink:hover{color:var(--a2);text-shadow:0 0 15px rgba(0,229,255,0.5);}
+.clink:hover::after{transform:scaleX(1);}
+
+@media(max-width:580px){
+  .tab-bar{grid-template-columns:repeat(2,1fr);}
+  .stats-grid{grid-template-columns:1fr 1fr;}
+  .stats-grid .sbox:last-child{grid-column:1/-1;}
+  .bulk-info{grid-template-columns:1fr 1fr;}
+  .bulk-info .binfo-card:last-child{grid-column:1/-1;}
+  .card{padding:18px;}
+  h1{font-size:32px;}
+}
+</style>
+</head>
+<body>
+
+<div class="bg-layer">
+  <div class="orb orb1"></div>
+  <div class="orb orb2"></div>
+  <div class="orb orb3"></div>
+</div>
+<div class="bg-grid"></div>
+<div class="bg-noise"></div>
+
+<div class="wrap">
+
+<!-- HEADER -->
+<header>
+  <div class="logo-wrap">
+    <div class="logo-dot"></div>
+    <span class="logo-text">Browser-Only · Zero Upload · 100% Private</span>
+  </div>
+  <h1>
+    <span class="h1-line1">PDF Compressed</span>
+    <span class="h1-line2">by Yuvraj</span>
+  </h1>
+  <p class="h1-sub">// compress · rename · download — all in your browser</p>
+</header>
+
+<!-- TABS -->
+<div class="tab-wrap">
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab(0)"><span>⚡ Custom<br>Compress</span></button>
+    <button class="tab-btn" onclick="switchTab(1)"><span>🏢 MSEB<br>Name Change</span></button>
+    <button class="tab-btn" onclick="switchTab(2)"><span>🔌 MSEB New<br>Meter</span></button>
+    <button class="tab-btn" onclick="switchTab(3)"><span>📦 Bulk<br>Compress</span></button>
+  </div>
+</div>
+
+<!-- ═══ TAB 0: CUSTOM ═══ -->
+<div class="tab-panel active" id="tab0">
+  <div class="card">
+    <div class="slabel">Upload PDF</div>
+    <div class="dropzone" id="dz0" ondragover="dzOver(event,'dz0')" ondragleave="dzLeave('dz0')" ondrop="dzDrop(event,0,1)">
+      <input type="file" accept="application/pdf" onchange="addFiles(event,0,1)"/>
+      <div class="dz-ring">📄</div>
+      <div class="dz-title">Drop your PDF here</div>
+      <div class="dz-sub">Click to browse · Max 200MB</div>
+    </div>
+    <div class="file-list" id="fl0"></div>
+  </div>
+
+  <div class="card">
+    <div class="slabel">Target Size</div>
+    <div class="size-wrap">
+      <input class="size-inp" type="number" id="ts0" value="1" min="1" max="100000"/>
+      <div class="unit-tgl">
+        <button class="ubtn on" id="u0kb" onclick="setUnit(0,'KB')">KB</button>
+        <button class="ubtn" id="u0mb" onclick="setUnit(0,'MB')">MB</button>
+      </div>
+    </div>
+    <div class="presets">
+      <button class="pbtn" onclick="setPreset(0,100,'KB')">100 KB</button>
+      <button class="pbtn" onclick="setPreset(0,300,'KB')">300 KB</button>
+      <button class="pbtn" onclick="setPreset(0,500,'KB')">500 KB</button>
+      <button class="pbtn" onclick="setPreset(0,1,'MB')">1 MB</button>
+      <button class="pbtn" onclick="setPreset(0,2,'MB')">2 MB</button>
+      <button class="pbtn" onclick="setPreset(0,5,'MB')">5 MB</button>
+      <button class="pbtn" onclick="setPreset(0,10,'MB')">10 MB</button>
+    </div>
+  </div>
+
+  <button class="cbtn" id="cb0" onclick="doCompress(0)" disabled>⚡ Compress PDF</button>
+  <div class="prog-area" id="pa0">
+    <div class="prog-top"><span class="prog-lbl" id="pl0">Processing...</span><span class="prog-pct" id="pp0">0%</span></div>
+    <div class="prog-track"><div class="prog-fill" id="pf0"></div></div>
+  </div>
+  <div class="ebox" id="eb0"></div>
+  <div class="results" id="ra0"></div>
+</div>
+
+<!-- ═══ TAB 1: MSEB NAME CHANGE (999KB → 1MB) ═══ -->
+<div class="tab-panel" id="tab1">
+  <div class="card">
+    <div class="auto-badge"><div class="auto-dot"></div>Auto Target: 999 KB → All files end with <strong>1MB</strong></div>
+    <div class="slabel">Upload up to 4 PDFs</div>
+    <div class="dropzone" id="dz1" ondragover="dzOver(event,'dz1')" ondragleave="dzLeave('dz1')" ondrop="dzDrop(event,1,4)">
+      <input type="file" accept="application/pdf" multiple onchange="addFiles(event,1,4)"/>
+      <div class="dz-ring">📂</div>
+      <div class="dz-title">Drop up to 4 PDFs</div>
+      <div class="dz-sub">All compressed to ~999 KB automatically</div>
+    </div>
+    <div class="file-list" id="fl1"></div>
+  </div>
+  <button class="cbtn" id="cb1" onclick="doCompress(1)" disabled>⚡ Compress All PDFs</button>
+  <div class="prog-area" id="pa1">
+    <div class="prog-top"><span class="prog-lbl" id="pl1">Processing...</span><span class="prog-pct" id="pp1">0%</span></div>
+    <div class="prog-track"><div class="prog-fill" id="pf1"></div></div>
+  </div>
+  <div class="ebox" id="eb1"></div>
+  <div class="results" id="ra1"></div>
+</div>
+
+<!-- ═══ TAB 2: MSEB NEW METER (300KB) ═══ -->
+<div class="tab-panel" id="tab2">
+  <div class="card">
+    <div class="auto-badge"><div class="auto-dot"></div>Auto Target: 300 KB → Filename ends with <strong>300KB</strong></div>
+    <div class="slabel">Upload up to 4 PDFs</div>
+    <div class="dropzone" id="dz2" ondragover="dzOver(event,'dz2')" ondragleave="dzLeave('dz2')" ondrop="dzDrop(event,2,4)">
+      <input type="file" accept="application/pdf" multiple onchange="addFiles(event,2,4)"/>
+      <div class="dz-ring">📂</div>
+      <div class="dz-title">Drop up to 4 PDFs</div>
+      <div class="dz-sub">All compressed to ~300 KB · Auto renamed</div>
+    </div>
+    <div class="file-list" id="fl2"></div>
+  </div>
+  <button class="cbtn" id="cb2" onclick="doCompress(2)" disabled>⚡ Compress All PDFs</button>
+  <div class="prog-area" id="pa2">
+    <div class="prog-top"><span class="prog-lbl" id="pl2">Processing...</span><span class="prog-pct" id="pp2">0%</span></div>
+    <div class="prog-track"><div class="prog-fill" id="pf2"></div></div>
+  </div>
+  <div class="ebox" id="eb2"></div>
+  <div class="results" id="ra2"></div>
+</div>
+
+<!-- ═══ TAB 3: BULK ═══ -->
+<div class="tab-panel" id="tab3">
+  <div class="card">
+    <div class="bulk-info">
+      <div class="binfo-card"><div class="binfo-num">∞</div><div class="binfo-lbl">Unlimited PDFs</div></div>
+      <div class="binfo-card"><div class="binfo-num" style="color:var(--a4)">ZIP</div><div class="binfo-lbl">Auto ZIP Download</div></div>
+      <div class="binfo-card"><div class="binfo-num" style="color:var(--success)">✓</div><div class="binfo-lbl">Individual Rename</div></div>
+    </div>
+    <div class="slabel">Upload PDFs (Unlimited)</div>
+    <div class="dropzone" id="dz3" ondragover="dzOver(event,'dz3')" ondragleave="dzLeave('dz3')" ondrop="dzDrop(event,3,999)">
+      <input type="file" accept="application/pdf" multiple onchange="addFiles(event,3,999)"/>
+      <div class="dz-ring">📦</div>
+      <div class="dz-title">Drop any number of PDFs</div>
+      <div class="dz-sub">Unlimited · Compressed individually · ZIP download</div>
+    </div>
+    <div class="file-list" id="fl3"></div>
+  </div>
+
+  <div class="card">
+    <div class="slabel">Target Size (for all)</div>
+    <div class="size-wrap">
+      <input class="size-inp" type="number" id="ts3" value="1" min="1" max="100000"/>
+      <div class="unit-tgl">
+        <button class="ubtn on" id="u3kb" onclick="setUnitBulk('KB')">KB</button>
+        <button class="ubtn" id="u3mb" onclick="setUnitBulk('MB')">MB</button>
+      </div>
+    </div>
+    <div class="presets">
+      <button class="pbtn" onclick="setPresetBulk(100,'KB')">100 KB</button>
+      <button class="pbtn" onclick="setPresetBulk(300,'KB')">300 KB</button>
+      <button class="pbtn" onclick="setPresetBulk(500,'KB')">500 KB</button>
+      <button class="pbtn" onclick="setPresetBulk(999,'KB')">999 KB</button>
+      <button class="pbtn" onclick="setPresetBulk(1,'MB')">1 MB</button>
+      <button class="pbtn" onclick="setPresetBulk(2,'MB')">2 MB</button>
+    </div>
+  </div>
+
+  <button class="cbtn" id="cb3" onclick="doCompress(3)" disabled>⚡ Compress All PDFs</button>
+  <div class="prog-area" id="pa3">
+    <div class="prog-top"><span class="prog-lbl" id="pl3">Processing...</span><span class="prog-pct" id="pp3">0%</span></div>
+    <div class="prog-track"><div class="prog-fill" id="pf3"></div></div>
+  </div>
+  <div class="ebox" id="eb3"></div>
+  <div class="results" id="ra3"></div>
+  <button class="zipbtn" id="zipbtn" onclick="downloadZIP()">📦 Download All as ZIP</button>
+</div>
+
+<footer>
+  <div class="credit">
+    Made with <span class="cheart">♥</span> by&nbsp;
+    <a class="clink" href="https://instagram.com/itz___yuviiii" target="_blank" rel="noopener">Yuvraj</a>
+  </div>
+</footer>
+</div>
+
+<script>
+// ════════════════════════════════
+//  CONFIG
+// ════════════════════════════════
+const CFG = [
+  {auto:false, target:null,     maxFiles:1},
+  {auto:true,  target:999*1024, maxFiles:4},  // MSEB Name Change
+  {auto:true,  target:300*1024, maxFiles:4},  // MSEB New Meter
+  {auto:false, target:null,     maxFiles:999}, // Bulk
+];
+
+const tabFiles   = [[],[],[],[]];
+const tabUnits   = ['KB','KB','KB','KB'];
+const tabResults = [[],[],[],[]];
+
+// ════════════════════════════════
+//  TABS
+// ════════════════════════════════
+function switchTab(i){
+  document.querySelectorAll('.tab-btn').forEach((b,j)=>b.classList.toggle('active',i===j));
+  document.querySelectorAll('.tab-panel').forEach((p,j)=>p.classList.toggle('active',i===j));
+}
+
+// ════════════════════════════════
+//  DROPZONE
+// ════════════════════════════════
+function dzOver(e,id){e.preventDefault();document.getElementById(id).classList.add('over');}
+function dzLeave(id){document.getElementById(id).classList.remove('over');}
+function dzDrop(e,tab,max){
+  e.preventDefault();dzLeave('dz'+tab);
+  pushFiles(tab,[...e.dataTransfer.files].filter(f=>f.type==='application/pdf'),max);
+}
+function addFiles(e,tab,max){
+  pushFiles(tab,[...e.target.files].filter(f=>f.type==='application/pdf'),max);
+  e.target.value='';
+}
+function pushFiles(tab,files,max){
+  for(const f of files){if(tabFiles[tab].length>=max)break;tabFiles[tab].push(f);}
+  renderFL(tab);
+  document.getElementById('cb'+tab).disabled=tabFiles[tab].length===0;
+  clearResults(tab);
+}
+function removeFile(tab,idx){
+  tabFiles[tab].splice(idx,1);
+  renderFL(tab);
+  document.getElementById('cb'+tab).disabled=tabFiles[tab].length===0;
+  clearResults(tab);
+}
+function clearResults(tab){
+  tabResults[tab]=[];
+  document.getElementById('ra'+tab).innerHTML='';
+  document.getElementById('ra'+tab).classList.remove('show');
+  document.getElementById('eb'+tab).classList.remove('show');
+  if(tab===3){document.getElementById('zipbtn').classList.remove('show');}
+}
+function renderFL(tab){
+  document.getElementById('fl'+tab).innerHTML=
+    tabFiles[tab].map((f,i)=>`
+      <div class="file-item">
+        <div class="fi-ico">📄</div>
+        <div class="fi-info">
+          <div class="fi-name">${esc(f.name)}</div>
+          <div class="fi-size">${fmtSz(f.size)}</div>
+        </div>
+        <button class="fi-rm" onclick="removeFile(${tab},${i})">✕ Remove</button>
+      </div>`).join('');
+}
+
+// ════════════════════════════════
+//  UNITS
+// ════════════════════════════════
+function setUnit(tab,u){
+  tabUnits[tab]=u;
+  document.getElementById('u0kb').classList.toggle('on',u==='KB');
+  document.getElementById('u0mb').classList.toggle('on',u==='MB');
+}
+function setPreset(tab,v,u){setUnit(tab,u);document.getElementById('ts'+tab).value=v;}
+function setUnitBulk(u){
+  tabUnits[3]=u;
+  document.getElementById('u3kb').classList.toggle('on',u==='KB');
+  document.getElementById('u3mb').classList.toggle('on',u==='MB');
+}
+function setPresetBulk(v,u){setUnitBulk(u);document.getElementById('ts3').value=v;}
+
+function getTarget(tab){
+  if(CFG[tab].auto)return CFG[tab].target;
+  const v=parseFloat(document.getElementById('ts'+tab).value)||1;
+  return tabUnits[tab]==='MB'?v*1048576:v*1024;
+}
+
+// ════════════════════════════════
+//  SIZE TAG — NO special chars
+//  999KB → 1MB rule
+// ════════════════════════════════
+function sizeTag(bytes){
+  const kb=bytes/1024, mb=kb/1024;
+  if(mb>=1) return Math.round(mb)+'MB';
+  // 999KB rounds to 1MB
+  if(Math.round(kb)>=1000) return '1MB';
+  return Math.round(kb)+'KB';
+}
+function fmtSz(b){
+  if(b>=1048576)return(b/1048576).toFixed(2)+' MB';
+  return(b/1024).toFixed(1)+' KB';
+}
+
+// ════════════════════════════════
+//  CLEAN FILENAME
+//  Remove _0001, _0002 etc. suffixes + special chars
+// ════════════════════════════════
+function cleanName(raw){
+  // Remove extension
+  let n=raw.replace(/\.pdf$/i,'');
+  // Remove _0001 _0002 _001 etc. at end
+  n=n.replace(/_\d{2,6}$/, '');
+  // Remove all non-alphanumeric
+  n=n.replace(/[^a-zA-Z0-9]/g,'');
+  return n;
+}
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// ════════════════════════════════
+//  PROGRESS
+// ════════════════════════════════
+function setProg(tab,pct,label){
+  document.getElementById('pf'+tab).style.width=pct+'%';
+  document.getElementById('pp'+tab).textContent=Math.round(pct)+'%';
+  document.getElementById('pl'+tab).textContent=label;
+}
+
+// ════════════════════════════════
+//  PDF.js LOADER
+// ════════════════════════════════
+let _pdfjs=null;
+function loadPdfJs(){
+  if(_pdfjs)return Promise.resolve(_pdfjs);
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload=()=>{
+      pdfjsLib.GlobalWorkerOptions.workerSrc=
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      _pdfjs=pdfjsLib;res(pdfjsLib);
+    };
+    s.onerror=rej;document.head.appendChild(s);
+  });
+}
+
+// ════════════════════════════════
+//  COMPRESSION ENGINE
+//  Pass 1: pdf-lib lossless strip
+//  Pass 2: canvas re-render with binary-search JPEG quality
+// ════════════════════════════════
+// ════════════════════════════════════════════════════════
+//  COMPRESSION ENGINE
+//  Railway server (Ghostscript) — exact compression
+// ════════════════════════════════════════════════════════
+
+// ⚠️ SET YOUR RAILWAY URL HERE after deploying:
+const SERVER_URL = 'YOUR_RAILWAY_URL_HERE';
+
+async function compressPDF(ab, targetBytes, onProgress=()=>{}){
+  try {
+    onProgress('⚡ Compressing on server...');
+    return await compressOnServer(ab, targetBytes);
+  } catch(e) {
+    console.error('Server error:', e.message);
+    onProgress('⚠ Server unavailable, using browser...');
+    return await compressInBrowser(ab, targetBytes);
+  }
+}
+
+async function compressOnServer(ab, targetBytes){
+  // Use FormData for efficient binary transfer
+  const blob = new Blob([ab], {type:'application/pdf'});
+  const form = new FormData();
+  form.append('pdf', blob, 'input.pdf');
+  form.append('targetBytes', String(targetBytes));
+
+  const resp = await fetch(SERVER_URL+'/compress', {
+    method: 'POST',
+    body: form,
+  });
+
+  if(!resp.ok){
+    const err = await resp.text();
+    throw new Error('Server '+resp.status+': '+err);
+  }
+
+  const data = await resp.json();
+  if(!data.success) throw new Error(data.error||'Unknown server error');
+
+  // Decode base64 response back to Uint8Array
+  const binary = atob(data.pdfBase64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+  return bytes;
+}
+
+// ── Browser fallback — canvas JPEG binary search ──
+async function compressInBrowser(ab, targetBytes){
+  const {PDFDocument}=PDFLib;
+
+  // Pass 1 — lossless strip
+  let doc=await PDFDocument.load(ab,{ignoreEncryption:true});
+  doc.setTitle('');doc.setAuthor('');doc.setSubject('');
+  doc.setKeywords([]);doc.setProducer('');doc.setCreator('');
+  let pass1=await doc.save({useObjectStreams:true,addDefaultPage:false});
+  if(pass1.byteLength<=targetBytes)return pass1;
+
+  // Pass 2 — canvas render binary search (fresh vars per call)
+  const pdfjs=await loadPdfJs();
+  const pdfDoc=await pdfjs.getDocument({data:new Uint8Array(ab)}).promise;
+  const nPages=pdfDoc.numPages;
+
+  let lo=0.02, hi=0.98, mid=0.5;
+  let bestData=null, bestDiff=Infinity;
+
+  for(let iter=0;iter<16;iter++){
+    const attempt=await renderToDoc(pdfDoc,nPages,mid);
+    if(!attempt)break;
+    const sz=attempt.byteLength;
+    const diff=targetBytes-sz;
+
+    if(diff>=0){
+      if(diff<bestDiff){bestDiff=diff;bestData=attempt;}
+      if(diff<=5*1024)break;
+      lo=mid;
+    } else {
+      hi=mid;
+    }
+
+    const next=(lo+hi)/2;
+    if(Math.abs(next-mid)<0.002)break;
+    mid=next;
+  }
+
+  if(bestData)return bestData;
+
+  for(let q=0.15;q>=0.03;q-=0.03){
+    const d=await renderToDoc(pdfDoc,nPages,q);
+    if(d&&d.byteLength<=targetBytes)return d;
+  }
+  return pass1;
+}
+
+async function renderToDoc(pdfDoc,nPages,q){
+  try{
+    const {PDFDocument}=PDFLib;
+    const nd=await PDFDocument.create();
+    const sc=Math.max(0.5,Math.min(1.4,0.55+q*0.85));
+    for(let p=1;p<=nPages;p++){
+      const pg=await pdfDoc.getPage(p);
+      const vp=pg.getViewport({scale:sc});
+      const cv=document.createElement('canvas');
+      cv.width=vp.width;cv.height=vp.height;
+      await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
+      const b64=cv.toDataURL('image/jpeg',q).split(',')[1];
+      const bytes=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
+      const img=await nd.embedJpg(bytes);
+      const ovp=pg.getViewport({scale:1});
+      const npg=nd.addPage([ovp.width,ovp.height]);
+      npg.drawImage(img,{x:0,y:0,width:ovp.width,height:ovp.height});
+    }
+    return await nd.save({useObjectStreams:true});
+  }catch(e){console.warn(e);return null;}
+}
+
+// ════════════════════════════════
+//  MAIN COMPRESS
+// ════════════════════════════════
+async function doCompress(tab){
+  const files=tabFiles[tab];
+  if(!files.length)return;
+  const targetBytes=getTarget(tab);
+  tabResults[tab]=[];
+
+  const raEl=document.getElementById('ra'+tab);
+  raEl.innerHTML='';raEl.classList.remove('show');
+  document.getElementById('eb'+tab).classList.remove('show');
+  document.getElementById('pa'+tab).classList.add('show');
+  document.getElementById('cb'+tab).disabled=true;
+  if(tab===3)document.getElementById('zipbtn').classList.remove('show');
+
+  try{
+    for(let i=0;i<files.length;i++){
+      const f=files[i];
+      const base=i/files.length*100, next=(i+1)/files.length*100;
+      setProg(tab,base+0.5,`Reading ${f.name}...`);
+      const ab=await f.arrayBuffer();
+      setProg(tab,base+(next-base)*0.1,`Uploading to server... (${i+1}/${files.length})`);
+      const compressed=await compressPDF(ab,targetBytes,(msg)=>{
+        setProg(tab,base+(next-base)*0.5,msg+` (${i+1}/${files.length})`);
+      });
+      setProg(tab,base+(next-base)*0.95,'Finalizing...');
+      const blob=new Blob([compressed],{type:'application/pdf'});
+      const url=URL.createObjectURL(blob);
+      const tag=sizeTag(blob.size);
+      const defName=cleanName(f.name);
+      tabResults[tab].push({blob,url,tag,defName,origSize:f.size,compSize:blob.size,compressed});
+      setProg(tab,next,`Done ${i+1}/${files.length}`);
+    }
+    setProg(tab,100,'All done! ✓');
+    renderResults(tab,targetBytes);
+    if(tab===3&&tabResults[tab].length>0)document.getElementById('zipbtn').classList.add('show');
+  }catch(err){
+    const eb=document.getElementById('eb'+tab);
+    eb.textContent='❌ '+( err.message||'Could not compress PDF.');
+    eb.classList.add('show');
+    console.error(err);
+  }finally{
+    document.getElementById('cb'+tab).disabled=false;
+  }
+}
+
+// ════════════════════════════════
+//  MSEB PREFIX LIVE PREVIEW
+// ════════════════════════════════
+function onMsebPrefix(tab){
+  const pfxId = tab===1 ? 'mseb1prefix' : 'mseb2prefix';
+  const preId = tab===1 ? 'mseb1preview' : 'mseb2preview';
+  const suffix = tab===1 ? '1MB' : '300KB';
+  const inp=document.getElementById(pfxId);
+  if(!inp)return;
+  const clean=inp.value.replace(/[^a-zA-Z0-9]/g,'');
+  if(inp.value!==clean)inp.value=clean;
+  const prev=document.getElementById(preId);
+  if(prev)prev.textContent=(clean||'PREFIX')+suffix+'.pdf';
+}
+
+// ════════════════════════════════
+//  RENDER RESULTS
+// ════════════════════════════════
+function renderResults(tab,targetBytes){
+  const raEl=document.getElementById('ra'+tab);
+  raEl.innerHTML='';
+
+  // Tab 1 = MSEB Name Change: single prefix, ALL files get prefix+1MB.pdf
+  if(tab===1){
+    const totalOrig=tabResults[1].reduce((s,r)=>s+r.origSize,0);
+    const totalComp=tabResults[1].reduce((s,r)=>s+r.compSize,0);
+    const savedPct=((totalOrig-totalComp)/totalOrig*100).toFixed(1);
+
+    // Summary card
+    const summDiv=document.createElement('div');
+    summDiv.className='res-item';
+    summDiv.innerHTML=`
+      <div style="font-family:var(--fm);font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.12em;margin-bottom:14px;">✅ Compression Complete</div>
+      <div class="stats-grid">
+        <div class="sbox"><div class="sv o">${fmtSz(totalOrig)}</div><div class="sk">Total Original</div></div>
+        <div class="sbox"><div class="sv b">${fmtSz(totalComp)}</div><div class="sk">Total Compressed</div></div>
+        <div class="sbox"><div class="sv g">${parseFloat(savedPct)>0?'-'+savedPct+'%':'—'}</div><div class="sk">Total Saved</div></div>
+      </div>`;
+    raEl.appendChild(summDiv);
+
+    tabResults[1].forEach((r,i)=>{
+      const fname=r.defName+'1MB.pdf';
+      const saved=((r.origSize-r.compSize)/r.origSize*100).toFixed(1);
+      const div=document.createElement('div');
+      div.className='res-item';
+      div.innerHTML=`
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div style="background:linear-gradient(135deg,var(--a1),var(--a2));border-radius:8px;padding:4px 14px;font-family:var(--fm);font-size:12px;color:#000;font-weight:700;">File ${i+1}</div>
+          <div style="font-family:var(--fm);font-size:13px;color:var(--text2);">${fmtSz(r.origSize)} → <span style="color:var(--success);font-weight:700;">${fmtSz(r.compSize)}</span> <span style="color:var(--success);">(-${saved}%)</span></div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:13px;display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-family:var(--fm);font-size:14px;color:var(--text);font-weight:600;">${esc(r.defName)}</span>
+          <span style="font-family:var(--fm);font-size:14px;color:var(--a3);font-weight:700;">1MB.pdf</span>
+        </div>
+        <div style="font-family:var(--fm);font-size:11px;color:var(--text3);margin-bottom:13px;">
+          <span style="color:var(--success);">✓</span> Will download as: <strong style="color:var(--text2);">${esc(fname)}</strong>
+        </div>
+        <a class="dlbtn" href="#" onclick="doDownloadMseb1(event,${i})">⬇ Download File ${i+1}</a>`;
+      raEl.appendChild(div);
+    });
+
+    // Reset button
+    const resetDiv=document.createElement('div');
+    resetDiv.innerHTML=`<button onclick="resetTab(1)" style="width:100%;margin-top:10px;padding:14px;background:none;border:1px solid var(--border);border-radius:12px;color:var(--text3);font-family:var(--fh);font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;letter-spacing:0.04em;" onmouseover="this.style.borderColor='var(--a1)';this.style.color='var(--a1)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)'">🔄 Compress More PDFs</button>`;
+    raEl.appendChild(resetDiv);
+
+    raEl.classList.add('show');
+    return;
+  }
+
+  // Tab 2 = MSEB New Meter: same as tab1 but 300KB
+  if(tab===2){
+    const totalOrig=tabResults[2].reduce((s,r)=>s+r.origSize,0);
+    const totalComp=tabResults[2].reduce((s,r)=>s+r.compSize,0);
+    const savedPct=((totalOrig-totalComp)/totalOrig*100).toFixed(1);
+
+    const summDiv=document.createElement('div');
+    summDiv.className='res-item';
+    summDiv.innerHTML=`
+      <div style="font-family:var(--fm);font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.12em;margin-bottom:14px;">✅ Compression Complete</div>
+      <div class="stats-grid">
+        <div class="sbox"><div class="sv o">${fmtSz(totalOrig)}</div><div class="sk">Total Original</div></div>
+        <div class="sbox"><div class="sv b">${fmtSz(totalComp)}</div><div class="sk">Total Compressed</div></div>
+        <div class="sbox"><div class="sv g">${parseFloat(savedPct)>0?'-'+savedPct+'%':'—'}</div><div class="sk">Total Saved</div></div>
+      </div>`;
+    raEl.appendChild(summDiv);
+
+    tabResults[2].forEach((r,i)=>{
+      const fname=r.defName+'300KB.pdf';
+      const saved=((r.origSize-r.compSize)/r.origSize*100).toFixed(1);
+      const div=document.createElement('div');
+      div.className='res-item';
+      div.innerHTML=`
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div style="background:linear-gradient(135deg,var(--a1),var(--a2));border-radius:8px;padding:4px 14px;font-family:var(--fm);font-size:12px;color:#000;font-weight:700;">File ${i+1}</div>
+          <div style="font-family:var(--fm);font-size:13px;color:var(--text2);">${fmtSz(r.origSize)} → <span style="color:var(--success);font-weight:700;">${fmtSz(r.compSize)}</span> <span style="color:var(--success);">(-${saved}%)</span></div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:13px;display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-family:var(--fm);font-size:14px;color:var(--text);font-weight:600;">${esc(r.defName)}</span>
+          <span style="font-family:var(--fm);font-size:14px;color:var(--a3);font-weight:700;">300KB.pdf</span>
+        </div>
+        <div style="font-family:var(--fm);font-size:11px;color:var(--text3);margin-bottom:13px;">
+          <span style="color:var(--success);">✓</span> Will download as: <strong style="color:var(--text2);">${esc(fname)}</strong>
+        </div>
+        <a class="dlbtn" href="#" onclick="doDownloadMseb2(event,${i})">⬇ Download File ${i+1}</a>`;
+      raEl.appendChild(div);
+    });
+
+    const resetDiv=document.createElement('div');
+    resetDiv.innerHTML=`<button onclick="resetTab(2)" style="width:100%;margin-top:10px;padding:14px;background:none;border:1px solid var(--border);border-radius:12px;color:var(--text3);font-family:var(--fh);font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;letter-spacing:0.04em;" onmouseover="this.style.borderColor='var(--a1)';this.style.color='var(--a1)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)'">🔄 Compress More PDFs</button>`;
+    raEl.appendChild(resetDiv);
+
+    raEl.classList.add('show');
+    return;
+  }
+
+  tabResults[tab].forEach((r,i)=>{
+    const saved=((r.origSize-r.compSize)/r.origSize*100).toFixed(1);
+    const warn=r.compSize>targetBytes;
+    const div=document.createElement('div');
+    div.className='res-item';
+    div.innerHTML=`
+      <div class="stats-grid">
+        <div class="sbox"><div class="sv o">${fmtSz(r.origSize)}</div><div class="sk">Original</div></div>
+        <div class="sbox"><div class="sv b">${fmtSz(r.compSize)}</div><div class="sk">Compressed</div></div>
+        <div class="sbox"><div class="sv g">${parseFloat(saved)>0?'-'+saved+'%':'—'}</div><div class="sk">Saved</div></div>
+      </div>
+      <div class="rename-box">
+        <div class="rlabel"><span class="rlabel-icon">✏️</span>Rename Before Download</div>
+        <div class="rrow">
+          <input class="rinput" id="ri_${tab}_${i}" type="text"
+            value="${esc(r.defName)}"
+            oninput="onRename(${tab},${i})"
+            placeholder="Enter file name"/>
+          <span class="rsuffix" id="rs_${tab}_${i}">${r.tag}.pdf</span>
+        </div>
+        <div class="rhint" id="rh_${tab}_${i}">
+          <span class="ok">✓</span> Will download as: <strong>${esc(r.defName)}${r.tag}.pdf</strong>
+        </div>
+      </div>
+      <a class="dlbtn" href="#" onclick="doDownload(event,${tab},${i})">⬇ Download Compressed PDF</a>
+      <div class="wbox${warn?' show':''}">
+        ${warn?`⚠ Target ${fmtSz(targetBytes)} not fully reached. Best: ${fmtSz(r.compSize)}. PDF content limits further compression.`:''}
+      </div>`;
+    raEl.appendChild(div);
+  });
+
+  // Reset button for tab0 and tab3
+  const rdiv=document.createElement('div');
+  rdiv.innerHTML=`<button onclick="resetTab(${tab})" style="width:100%;margin-top:10px;padding:14px;background:none;border:1px solid var(--border);border-radius:12px;color:var(--text3);font-family:var(--fh);font-size:14px;font-weight:600;cursor:pointer;letter-spacing:0.04em;" onmouseover="this.style.borderColor='var(--a1)';this.style.color='var(--a1)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)'">🔄 Compress More PDFs</button>`;
+  raEl.appendChild(rdiv);
+  raEl.classList.add('show');
+}
+
+// ════════════════════════════════
+//  RENAME
+// ════════════════════════════════
+function onRename(tab,i){
+  const inp=document.getElementById(`ri_${tab}_${i}`);
+  const clean=inp.value.replace(/[^a-zA-Z0-9]/g,'');
+  if(inp.value!==clean)inp.value=clean;
+  const tag=tabResults[tab][i].tag;
+  const hint=document.getElementById(`rh_${tab}_${i}`);
+  hint.innerHTML=clean
+    ?`<span class="ok">✓</span> Will download as: <strong>${clean}${tag}.pdf</strong>`
+    :`<span class="bad">⚠ Name cannot be empty</span>`;
+}
+
+// ════════════════════════════════
+//  DOWNLOAD SINGLE
+// ════════════════════════════════
+function doDownload(e,tab,i){
+  e.preventDefault();
+  const r=tabResults[tab][i];
+  const name=(document.getElementById(`ri_${tab}_${i}`).value||r.defName).replace(/[^a-zA-Z0-9]/g,'');
+  if(!name)return;
+  const a=document.createElement('a');
+  a.href=r.url;a.download=name+r.tag+'.pdf';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+
+// ════════════════════════════════
+//  MSEB DOWNLOAD + RESET
+// ════════════════════════════════
+function doDownloadMseb1(e,i){
+  e.preventDefault();
+  const r=tabResults[1][i];
+  triggerDownload(r.url,r.defName+'1MB.pdf');
+}
+function doDownloadMseb2(e,i){
+  e.preventDefault();
+  const r=tabResults[2][i];
+  triggerDownload(r.url,r.defName+'300KB.pdf');
+}
+function triggerDownload(url,fname){
+  const a=document.createElement('a');
+  a.href=url;a.download=fname;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+function resetTab(tab){
+  tabFiles[tab]=[];
+  tabResults[tab]=[];
+  renderFL(tab);
+  document.getElementById('cb'+tab).disabled=true;
+  document.getElementById('ra'+tab).innerHTML='';
+  document.getElementById('ra'+tab).classList.remove('show');
+  document.getElementById('pa'+tab).classList.remove('show');
+  document.getElementById('eb'+tab).classList.remove('show');
+  // Reset prefix inputs
+  if(tab===1){const p=document.getElementById('mseb1prefix');if(p)p.value='';onMsebPrefix(1);}
+  if(tab===2){const p=document.getElementById('mseb2prefix');if(p)p.value='';onMsebPrefix(2);}
+  if(tab===3){document.getElementById('zipbtn').classList.remove('show');}
+}
+
+// ════════════════════════════════
+//  ZIP DOWNLOAD (Bulk tab)
+// ════════════════════════════════
+async function downloadZIP(){
+  const results=tabResults[3];
+  if(!results.length)return;
+  const btn=document.getElementById('zipbtn');
+  btn.textContent='⏳ Creating ZIP...';btn.disabled=true;
+
+  try{
+    const zip=new JSZip();
+    const usedNames={};
+    for(let i=0;i<results.length;i++){
+      const r=results[i];
+      const inp=document.getElementById(`ri_3_${i}`);
+      let name=(inp?inp.value:r.defName).replace(/[^a-zA-Z0-9]/g,'')||r.defName;
+      let fname=name+r.tag+'.pdf';
+      // Deduplicate
+      if(usedNames[fname]){usedNames[fname]++;fname=name+r.tag+'_'+usedNames[fname]+'.pdf';}
+      else usedNames[fname]=1;
+      zip.file(fname,r.compressed);
+    }
+    const content=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
+    const url=URL.createObjectURL(content);
+    const a=document.createElement('a');
+    a.href=url;a.download='compressed_pdfs.zip';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }catch(err){
+    alert('ZIP error: '+err.message);
+  }finally{
+    btn.textContent='📦 Download All as ZIP';btn.disabled=false;
+  }
+}
+</script>
+</body>
+</html>
