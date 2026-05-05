@@ -70,7 +70,7 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
 
     // First try: strip metadata only (lossless)
     try {
-      const gsCmd = buildGsCmd(inputPath, outputPath, '/prepress', 300);
+      const gsCmd = buildGsCmd(inputPath, outputPath, '/printer', 300);
       execSync(gsCmd, { timeout: 20000 });
       const sz = fs.statSync(outputPath).size;
       if (sz <= targetBytes) {
@@ -85,12 +85,13 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
       }
     } catch (e) { /* continue */ }
 
-    // Binary search on DPI: range 20–200
-    let dpiLo = 20, dpiHi = 200;
+    // Binary search on DPI: range 72–300
+    // 72 DPI = screen quality (small), 300 DPI = print quality (large)
+    let dpiLo = 72, dpiHi = 300;
 
     for (let iter = 0; iter < 16; iter++) {
       const dpiMid = Math.round((dpiLo + dpiHi) / 2);
-      const setting = dpiMid > 150 ? '/ebook' : dpiMid > 100 ? '/screen' : '/screen';
+      const setting = dpiMid > 200 ? '/printer' : dpiMid > 130 ? '/ebook' : '/screen';
 
       try {
         const tmpOut = path.join(tmpDir, `out_${dpiMid}.pdf`);
