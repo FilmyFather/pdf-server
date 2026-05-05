@@ -13,34 +13,25 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Multer for file uploads — store in memory
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
+  limits: { fileSize: 200 * 1024 * 1024 },
 });
 
-// Health check
 app.get('/', (req, res) => {
-  res.json({ status: 'PDF Compressor Server Running', ghostscript: checkGS() });
+  res.json({ status: 'PDF Compressor Running', ghostscript: checkGS() });
 });
 
 function checkGS() {
-  try {
-    execSync('gs --version', { timeout: 5000 });
-    return 'available';
-  } catch (e) {
-    return 'not found';
-  }
+  try { execSync('gs --version', { timeout: 5000 }); return 'available'; }
+  catch (e) { return 'not found: ' + e.message; }
 }
 
-// ── COMPRESS ENDPOINT ──
 app.post('/compress', upload.single('pdf'), async (req, res) => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-' + uuidv4().slice(0, 8) + '-'));
-  const inputPath  = path.join(tmpDir, 'input.pdf');
-  const outputPath = path.join(tmpDir, 'output.pdf');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-' + uuidv4().slice(0,8) + '-'));
+  const inputPath = path.join(tmpDir, 'input.pdf');
 
   try {
-    // Get PDF buffer — either from file upload or base64
     let pdfBuf;
     if (req.file) {
       pdfBuf = req.file.buffer;
@@ -55,103 +46,103 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
       return res.status(400).json({ error: 'No targetBytes provided' });
     }
 
-    const TOLERANCE = 5 * 1024; // 5KB
-
     fs.writeFileSync(inputPath, pdfBuf);
     const originalSize = pdfBuf.length;
+    const TOLERANCE = 5 * 1024; // 5KB
 
-    // ── GHOSTSCRIPT BINARY SEARCH ──
-    // We binary search on ImageResolution (DPI) to hit exact target
+    console.log(`Compressing: original=${originalSize}, target=${targetBytes}`);
+
+    // Binary search on DPI: 150 to 600
     // Higher DPI = better quality = bigger file
-    // Lower DPI  = lower quality = smaller file
-
+    // We want the HIGHEST DPI that still fits under targetBytes
+    let dpiLo = 150, dpiHi = 600;
     let bestOutput = null;
-    let bestDiff   = Infinity;
-
-    // First try: strip metadata only (lossless)
-    try {
-      const gsCmd = buildGsCmd(inputPath, outputPath, '/printer', 300);
-      execSync(gsCmd, { timeout: 20000 });
-      const sz = fs.statSync(outputPath).size;
-      if (sz <= targetBytes) {
-        const diff = targetBytes - sz;
-        if (diff < bestDiff) {
-          bestDiff = diff;
-          bestOutput = fs.readFileSync(outputPath);
-        }
-        if (diff <= TOLERANCE) {
-          return sendResult(res, bestOutput, originalSize);
-        }
-      }
-    } catch (e) { /* continue */ }
-
-    // Binary search on DPI: range 72–300
-    // 72 DPI = screen quality (small), 300 DPI = print quality (large)
-    let dpiLo = 72, dpiHi = 300;
+    let bestDiff = Infinity;
 
     for (let iter = 0; iter < 16; iter++) {
       const dpiMid = Math.round((dpiLo + dpiHi) / 2);
-      const setting = dpiMid > 200 ? '/printer' : dpiMid > 130 ? '/ebook' : '/screen';
+      const tmpOut = path.join(tmpDir, `out_${iter}.pdf`);
 
       try {
-        const tmpOut = path.join(tmpDir, `out_${dpiMid}.pdf`);
-        const gsCmd  = buildGsCmd(inputPath, tmpOut, setting, dpiMid);
-        execSync(gsCmd, { timeout: 25000 });
+        const gsCmd = buildGsCmd(inputPath, tmpOut, dpiMid);
+        execSync(gsCmd, { timeout: 30000 });
 
-        const sz   = fs.statSync(tmpOut).size;
+        const sz = fs.statSync(tmpOut).size;
         const diff = targetBytes - sz;
 
+        console.log(`  iter=${iter} dpi=${dpiMid} size=${sz} diff=${diff}`);
+
         if (diff >= 0) {
-          // Under or equal target — valid
+          // Under target — valid
           if (diff < bestDiff) {
-            bestDiff   = diff;
+            bestDiff = diff;
             bestOutput = fs.readFileSync(tmpOut);
           }
-          if (diff <= TOLERANCE) break; // Within 5KB — perfect!
-          dpiLo = dpiMid + 1; // Try higher DPI (bigger file, closer to target)
+          if (diff <= TOLERANCE) {
+            console.log(`  Perfect at DPI=${dpiMid}, size=${sz}`);
+            break;
+          }
+          // Too small — try higher DPI
+          dpiLo = dpiMid + 1;
         } else {
-          // Over target — reduce DPI
+          // Over target — try lower DPI
           dpiHi = dpiMid - 1;
         }
       } catch (e) {
-        console.error(`GS failed at DPI ${dpiMid}:`, e.message);
+        console.error(`  GS failed at DPI ${dpiMid}:`, e.message);
         dpiHi = dpiMid - 1;
       }
 
       if (dpiLo > dpiHi) break;
     }
 
-    // Emergency: very low DPI
+    // If nothing found under target at DPI 150, go lower
     if (!bestOutput) {
-      for (const dpi of [15, 10, 8]) {
+      console.log('Going below 150 DPI...');
+      for (const dpi of [120, 96, 72, 60, 48, 36]) {
+        const tmpOut = path.join(tmpDir, `out_low_${dpi}.pdf`);
         try {
-          const tmpOut = path.join(tmpDir, `emergency_${dpi}.pdf`);
-          execSync(buildGsCmd(inputPath, tmpOut, '/screen', dpi), { timeout: 20000 });
+          execSync(buildGsCmd(inputPath, tmpOut, dpi), { timeout: 30000 });
           const sz = fs.statSync(tmpOut).size;
-          if (sz <= targetBytes) {
+          const diff = targetBytes - sz;
+          console.log(`  low dpi=${dpi} size=${sz}`);
+          if (diff >= 0 && diff < bestDiff) {
+            bestDiff = diff;
             bestOutput = fs.readFileSync(tmpOut);
-            break;
+            if (diff <= TOLERANCE) break;
           }
-        } catch (e) { /* continue */ }
+        } catch (e) { console.error(`low DPI ${dpi} failed:`, e.message); }
       }
     }
 
     if (!bestOutput) {
-      return res.status(422).json({ error: 'Cannot compress to target — PDF may already be very small' });
+      return res.status(422).json({ error: 'Cannot compress to target size' });
     }
 
-    return sendResult(res, bestOutput, originalSize);
+    console.log(`Final size: ${bestOutput.length} (target: ${targetBytes}, diff: ${targetBytes - bestOutput.length})`);
+
+    res.json({
+      success: true,
+      pdfBase64: bestOutput.toString('base64'),
+      originalSize,
+      compressedSize: bestOutput.length,
+    });
 
   } catch (err) {
-    console.error('Compress error:', err);
+    console.error('Error:', err);
     res.status(500).json({ error: err.message });
   } finally {
-    // Cleanup temp dir
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) {}
   }
 });
 
-function buildGsCmd(input, output, setting, dpi) {
+function buildGsCmd(input, output, dpi) {
+  // Choose quality setting based on DPI
+  let setting;
+  if (dpi >= 300) setting = '/printer';
+  else if (dpi >= 150) setting = '/ebook';
+  else setting = '/screen';
+
   return [
     'gs',
     '-sDEVICE=pdfwrite',
@@ -165,27 +156,18 @@ function buildGsCmd(input, output, setting, dpi) {
     '-dSubsetFonts=true',
     '-dDownsampleColorImages=true',
     `-dColorImageResolution=${dpi}`,
+    '-dColorImageDownsampleType=/Bicubic',
     '-dDownsampleGrayImages=true',
     `-dGrayImageResolution=${dpi}`,
+    '-dGrayImageDownsampleType=/Bicubic',
     '-dDownsampleMonoImages=true',
     `-dMonoImageResolution=${dpi}`,
-    '-dColorImageDownsampleType=/Bicubic',
-    '-dGrayImageDownsampleType=/Bicubic',
     `-sOutputFile=${output}`,
     input,
   ].join(' ');
 }
 
-function sendResult(res, buf, originalSize) {
-  res.json({
-    success: true,
-    pdfBase64: buf.toString('base64'),
-    originalSize,
-    compressedSize: buf.length,
-  });
-}
-
 app.listen(PORT, () => {
-  console.log(`✅ PDF Compressor Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
   console.log(`Ghostscript: ${checkGS()}`);
 });
