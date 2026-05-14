@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const { execSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -18,8 +18,10 @@ const upload = multer({
 });
 
 function checkGS() {
-  try { execSync('gs --version', { timeout: 5000 }); return 'available'; }
-  catch (e) { return 'not found: ' + e.message; }
+  try {
+    const r = spawnSync('gs', ['--version']);
+    return r.status === 0 ? 'available v' + r.stdout.toString().trim() : 'error';
+  } catch (e) { return 'not found'; }
 }
 
 app.get('/', (req, res) => {
@@ -27,18 +29,12 @@ app.get('/', (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-//  GHOSTSCRIPT RUNNER
+//  GHOSTSCRIPT — using spawnSync (no shell issues)
 // ─────────────────────────────────────────────
-function runGS(inputPath, outputPath, opts = {}) {
-  const {
-    dpi        = 150,
-    jpegQ      = 75,
-    preset     = '/ebook',
-    grayscale  = false,
-  } = opts;
+function runGS(inputPath, outputPath, opts) {
+  const { dpi, jpegQ, preset } = opts;
 
   const args = [
-    'gs',
     '-dNOSAFER',
     '-dNOPAUSE',
     '-dBATCH',
@@ -46,45 +42,56 @@ function runGS(inputPath, outputPath, opts = {}) {
     '-sDEVICE=pdfwrite',
     '-dCompatibilityLevel=1.4',
     `-dPDFSETTINGS=${preset}`,
-
-    // Color images
+    '-dDetectDuplicateImages=true',
+    '-dCompressFonts=true',
+    '-dSubsetFonts=true',
+    // Color
     '-dDownsampleColorImages=true',
     '-dColorImageDownsampleType=/Bicubic',
     `-dColorImageResolution=${dpi}`,
     '-dColorImageFilter=/DCTEncode',
-
-
-    // Gray images
+    // Gray
     '-dDownsampleGrayImages=true',
     '-dGrayImageDownsampleType=/Bicubic',
     `-dGrayImageResolution=${dpi}`,
     '-dGrayImageFilter=/DCTEncode',
-
-    // Mono images
+    // Mono
     '-dDownsampleMonoImages=true',
     '-dMonoImageDownsampleType=/Bicubic',
     `-dMonoImageResolution=${Math.min(dpi * 2, 300)}`,
-
-    // Font
-    '-dCompressFonts=true',
-    '-dSubsetFonts=true',
-    '-dDetectDuplicateImages=true',
-
-    // JPEG quality via GS dict
+    // JPEG quality
     `-dJPEGQ=${jpegQ}`,
-
-    grayscale ? '-sColorConversionStrategy=Gray -dProcessColorModel=/DeviceGray' : '',
-
     `-sOutputFile=${outputPath}`,
     inputPath,
-  ].filter(Boolean).join(' ');
+  ];
 
-  execSync(args, { timeout: 55000 });
-  return fs.statSync(outputPath).size;
+  const result = spawnSync('gs', args, {
+    timeout: 60000,
+    maxBuffer: 250 * 1024 * 1024,
+  });
+
+  if (result.status !== 0) {
+    const errMsg = (result.stderr || Buffer.alloc(0)).toString().slice(0, 500);
+    throw new Error(`GS failed (${result.status}): ${errMsg}`);
+  }
+
+  if (!fs.existsSync(outputPath)) {
+    throw new Error('GS output file not created');
+  }
+
+  const sz = fs.statSync(outputPath).size;
+
+  // For scanned PDFs, minimum valid size is 50KB
+  if (sz < 50 * 1024) {
+    const stderr = (result.stderr || Buffer.alloc(0)).toString();
+    throw new Error(`GS output too small (${fmtKB(sz)}) — likely corrupt. stderr: ${stderr.slice(0,200)}`);
+  }
+
+  return sz;
 }
 
 // ─────────────────────────────────────────────
-//  MAIN COMPRESS ROUTE
+//  COMPRESS ROUTE
 // ─────────────────────────────────────────────
 app.post('/compress', upload.single('pdf'), async (req, res) => {
   const id = uuidv4().slice(0, 8);
@@ -92,7 +99,7 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
   const inputPath = path.join(tmpDir, 'input.pdf');
 
   try {
-    // ── Get PDF buffer ──
+    // Get PDF
     let pdfBuf;
     if (req.file) {
       pdfBuf = req.file.buffer;
@@ -107,220 +114,183 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
       return res.status(400).json({ error: 'Invalid targetBytes' });
     }
 
+    // Write & verify input
     fs.writeFileSync(inputPath, pdfBuf);
+    const writtenSz = fs.statSync(inputPath).size;
+    if (writtenSz !== pdfBuf.length) {
+      throw new Error(`Write mismatch: expected ${pdfBuf.length}, got ${writtenSz}`);
+    }
+
     const originalSize = pdfBuf.length;
-    const TOLERANCE    = 8 * 1024; // 8KB — acceptable gap below target
-    const MIN_VALID    = targetBytes * 0.80; // reject if < 80% of target
+    const TOLERANCE   = 10 * 1024; // 10KB — acceptable gap
+    const MIN_VALID   = targetBytes * 0.85; // reject if < 85% of target
 
     console.log(`[${id}] original=${fmtKB(originalSize)} target=${fmtKB(targetBytes)}`);
 
-    // If original is already under target — return as-is (lossless strip only)
+    // Already small enough
     if (originalSize <= targetBytes) {
-      const out = path.join(tmpDir, 'stripped.pdf');
-      try {
-        runGS(inputPath, out, { dpi: 300, jpegQ: 95, preset: '/prepress' });
-        const sz = fs.statSync(out).size;
-        if (sz <= targetBytes) {
-          console.log(`[${id}] Already small, stripped to ${fmtKB(sz)}`);
-          return sendResult(res, fs.readFileSync(out), originalSize);
-        }
-      } catch (_) {}
       return sendResult(res, pdfBuf, originalSize);
     }
 
-    // ─────────────────────────────────────────
-    //  PHASE 1: Probe — find size at 3 anchor points
-    //  to understand this PDF's compression curve
-    // ─────────────────────────────────────────
+    let bestOutput = null;
+    let bestDiff   = Infinity;
+
+    // ── PHASE 1: Probe at 5 DPI/Quality points ──
+    // For scanned PDFs, DPI is the primary lever
     const probes = [
-      { dpi: 250, jpegQ: 90, preset: '/printer'  },
-      { dpi: 150, jpegQ: 65, preset: '/ebook'    },
-      { dpi:  96, jpegQ: 40, preset: '/screen'   },
+      { dpi: 200, jpegQ: 85, preset: '/ebook'  },
+      { dpi: 150, jpegQ: 75, preset: '/ebook'  },
+      { dpi: 120, jpegQ: 65, preset: '/screen' },
+      { dpi:  96, jpegQ: 55, preset: '/screen' },
+      { dpi:  72, jpegQ: 45, preset: '/screen' },
     ];
 
-    const probeResults = [];
-    for (const [pi, p] of probes.entries()) {
+    const goodProbes = []; // probes under target
+
+    for (const [pi, cfg] of probes.entries()) {
       const out = path.join(tmpDir, `probe_${pi}.pdf`);
       try {
-        const sz = runGS(inputPath, out, p);
-        probeResults.push({ ...p, sz, out });
-        console.log(`[${id}] probe${pi} dpi=${p.dpi} q=${p.jpegQ} → ${fmtKB(sz)}`);
+        const sz   = runGS(inputPath, out, cfg);
+        const diff = targetBytes - sz;
+        console.log(`[${id}] probe${pi} dpi=${cfg.dpi} q=${cfg.jpegQ} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
+
+        if (diff >= 0) {
+          goodProbes.push({ ...cfg, sz, out });
+          if (diff < bestDiff) {
+            bestDiff   = diff;
+            bestOutput = fs.readFileSync(out);
+          }
+          if (diff <= TOLERANCE) {
+            console.log(`[${id}] ✓ Probe hit!`);
+            return sendResult(res, bestOutput, originalSize);
+          }
+        }
       } catch (e) {
         console.log(`[${id}] probe${pi} failed: ${e.message}`);
       }
     }
 
-    // If best probe (highest quality) is already under target — use it
-    const bestProbe = probeResults.find(p => p.sz <= targetBytes);
-    if (bestProbe && targetBytes - bestProbe.sz <= TOLERANCE) {
-      console.log(`[${id}] Probe hit! ${fmtKB(bestProbe.sz)}`);
-      return sendResult(res, fs.readFileSync(bestProbe.out), originalSize);
-    }
-
-    // ─────────────────────────────────────────
-    //  PHASE 2: Interpolate starting point
-    //  Use probe data to estimate good starting DPI/Q
-    // ─────────────────────────────────────────
-
-    // Find two probes that bracket the target
+    // ── PHASE 2: Binary search between best probes ──
+    // Find the two probes that bracket the target
     let pLo = null, pHi = null;
-    for (let i = 0; i < probeResults.length - 1; i++) {
-      const a = probeResults[i], b = probeResults[i + 1];
-      if (a.sz >= targetBytes && b.sz <= targetBytes) {
-        pHi = a; pLo = b;
-        break;
-      }
+
+    for (const [pi, cfg] of probes.entries()) {
+      const out = path.join(tmpDir, `probe_${pi}.pdf`);
+      if (!fs.existsSync(out)) continue;
+      const sz = fs.statSync(out).size;
+      if (sz > targetBytes && (!pHi || sz < pHi.sz)) pHi = { ...cfg, sz };
+      if (sz <= targetBytes && (!pLo || sz > pLo.sz)) pLo = { ...cfg, sz };
     }
 
-    // Derive starting DPI and Q from bracketing probes
-    let startDPI, startQ;
+    // Set binary search bounds
+    let dpiLo, dpiHi, qLo, qHi;
     if (pLo && pHi) {
-      const ratio = (targetBytes - pLo.sz) / (pHi.sz - pLo.sz);
-      startDPI = Math.round(pLo.dpi + ratio * (pHi.dpi - pLo.dpi));
-      startQ   = Math.round(pLo.jpegQ + ratio * (pHi.jpegQ - pLo.jpegQ));
-    } else if (probeResults.length > 0) {
-      // All probes above or below target — use closest
-      const closest = [...probeResults].sort((a, b) =>
-        Math.abs(a.sz - targetBytes) - Math.abs(b.sz - targetBytes)
-      )[0];
-      startDPI = closest.dpi;
-      startQ   = closest.jpegQ;
+      dpiLo = pLo.dpi; dpiHi = pHi.dpi;
+      qLo   = pLo.jpegQ; qHi = pHi.jpegQ;
+    } else if (pLo) {
+      dpiLo = pLo.dpi; dpiHi = Math.min(pLo.dpi + 60, 250);
+      qLo   = pLo.jpegQ; qHi = Math.min(pLo.jpegQ + 20, 92);
+    } else if (pHi) {
+      dpiLo = Math.max(pHi.dpi - 60, 50); dpiHi = pHi.dpi;
+      qLo   = Math.max(pHi.jpegQ - 20, 20); qHi = pHi.jpegQ;
     } else {
-      startDPI = 150;
-      startQ   = 65;
+      dpiLo = 50; dpiHi = 200;
+      qLo   = 30; qHi   = 85;
     }
 
-    startDPI = clamp(startDPI, 72, 300);
-    startQ   = clamp(startQ,   20, 95);
+    console.log(`[${id}] Binary search: dpi=[${dpiLo}-${dpiHi}] q=[${qLo}-${qHi}]`);
 
-    console.log(`[${id}] Interpolated start: dpi=${startDPI} q=${startQ}`);
+    // Binary search on DPI (primary) with fixed Q mid
+    let lo = dpiLo, hi = dpiHi;
 
-    // ─────────────────────────────────────────
-    //  PHASE 3: Fine binary search around start
-    // ─────────────────────────────────────────
-    let bestOutput = null;
-    let bestDiff   = Infinity;
-
-    // Check if any probe is valid already
-    for (const p of probeResults) {
-      const diff = targetBytes - p.sz;
-      if (diff >= 0 && diff < bestDiff) {
-        bestDiff   = diff;
-        bestOutput = fs.readFileSync(p.out);
-      }
-    }
-
-    // Binary search on quality (primary axis)
-    let qLo = Math.max(20, startQ - 25);
-    let qHi = Math.min(95, startQ + 25);
-    let dpi  = startDPI;
-
-    for (let iter = 0; iter < 16; iter++) {
-      if (qLo > qHi) break;
-      const qMid = Math.round((qLo + qHi) / 2);
-      const out  = path.join(tmpDir, `search_${iter}.pdf`);
+    for (let iter = 0; iter < 14; iter++) {
+      if (lo > hi) break;
+      const dpiMid = Math.round((lo + hi) / 2);
+      const qMid   = Math.round((qLo + qHi) / 2);
+      const preset = dpiMid >= 150 ? '/ebook' : '/screen';
+      const out    = path.join(tmpDir, `bs_${iter}.pdf`);
 
       let sz;
       try {
-        sz = runGS(inputPath, out, {
-          dpi,
-          jpegQ:  qMid,
-          preset: dpi >= 200 ? '/printer' : dpi >= 130 ? '/ebook' : '/screen',
-        });
+        sz = runGS(inputPath, out, { dpi: dpiMid, jpegQ: qMid, preset });
       } catch (e) {
-        console.log(`[${id}] search iter=${iter} failed: ${e.message}`);
-        qHi = qMid - 1;
+        console.log(`[${id}] bs iter=${iter} failed: ${e.message}`);
+        hi = dpiMid - 1;
         continue;
       }
 
       const diff = targetBytes - sz;
-      console.log(`[${id}] search iter=${iter} dpi=${dpi} q=${qMid} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
-
-      // Reject absurd outputs (< 50KB or < 10% of target)
-      if (sz < 50 * 1024 || sz < targetBytes * 0.10) {
-        console.log(`[${id}] Rejected absurd output ${fmtKB(sz)}`);
-        qLo = qMid + 1;
-        continue;
-      }
+      console.log(`[${id}] bs iter=${iter} dpi=${dpiMid} q=${qMid} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
 
       if (diff >= 0) {
-        // Valid: under or equal target
+        // Under target — valid
         if (diff < bestDiff) {
           bestDiff   = diff;
           bestOutput = fs.readFileSync(out);
         }
-        if (diff <= TOLERANCE) {
-          console.log(`[${id}] ✓ Within tolerance at iter=${iter}`);
-          break;
-        }
-        // Too small — raise quality
-        qLo = qMid + 1;
-        // Also nudge DPI up if quality is already high
-        if (qMid >= 85 && dpi < 250) dpi = Math.min(250, dpi + 20);
+        if (diff <= TOLERANCE) break; // Perfect!
+        lo = dpiMid + 1; // Too small, raise DPI
+        // Also raise Q slightly
+        qLo = Math.min(qMid + 2, qHi);
       } else {
-        // Over target — lower quality
-        qHi = qMid - 1;
-        // Also nudge DPI down if still over by a lot
-        if (diff < -300 * 1024 && dpi > 96) dpi = Math.max(96, dpi - 20);
+        hi = dpiMid - 1; // Too big, lower DPI
+        qHi = Math.max(qMid - 2, qLo);
       }
     }
 
-    // ─────────────────────────────────────────
-    //  PHASE 4: DPI sweep if Q search not enough
-    // ─────────────────────────────────────────
-    if (!bestOutput || bestDiff > TOLERANCE * 3) {
-      console.log(`[${id}] Q search insufficient, doing DPI sweep...`);
-      const dpiSteps = [200, 160, 130, 110, 96, 85, 75, 65, 55, 48];
+    // ── PHASE 3: Fine Q-only tuning at best DPI ──
+    if (bestOutput && bestDiff > TOLERANCE) {
+      const bestDPI = lo;
+      let qfLo = Math.max(20, qLo - 5);
+      let qfHi = Math.min(92, qHi + 5);
 
-      for (const d of dpiSteps) {
-        const out = path.join(tmpDir, `dpisweep_${d}.pdf`);
+      console.log(`[${id}] Fine Q tuning at dpi=${bestDPI} q=[${qfLo}-${qfHi}]`);
+
+      for (let iter = 0; iter < 8; iter++) {
+        if (qfLo > qfHi) break;
+        const qMid  = Math.round((qfLo + qfHi) / 2);
+        const preset = bestDPI >= 150 ? '/ebook' : '/screen';
+        const out   = path.join(tmpDir, `fq_${iter}.pdf`);
+
+        let sz;
         try {
-          const sz   = runGS(inputPath, out, {
-            dpi: d, jpegQ: 70,
-            preset: d >= 150 ? '/ebook' : '/screen',
-          });
-          const diff = targetBytes - sz;
-          console.log(`[${id}] dpisweep dpi=${d} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
-
-          if (sz < 50 * 1024) continue; // skip absurd
-
-          if (diff >= 0 && diff < bestDiff) {
-            bestDiff   = diff;
-            bestOutput = fs.readFileSync(out);
-            if (diff <= TOLERANCE) break;
-          }
-
-          if (diff >= 0) break; // found valid, stop going lower
+          sz = runGS(inputPath, out, { dpi: bestDPI, jpegQ: qMid, preset });
         } catch (e) {
-          console.log(`[${id}] dpisweep ${d} failed: ${e.message}`);
+          qfHi = qMid - 1;
+          continue;
+        }
+
+        const diff = targetBytes - sz;
+        console.log(`[${id}] fq iter=${iter} q=${qMid} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
+
+        if (diff >= 0 && diff < bestDiff) {
+          bestDiff   = diff;
+          bestOutput = fs.readFileSync(out);
+          if (diff <= TOLERANCE) break;
+          qfLo = qMid + 1;
+        } else {
+          qfHi = qMid - 1;
         }
       }
     }
 
-    // ─────────────────────────────────────────
-    //  FINAL VALIDATION
-    // ─────────────────────────────────────────
+    // ── FINAL VALIDATION ──
     if (!bestOutput) {
       return res.status(422).json({
         error: 'Could not compress to target size',
-        originalSize,
-        targetBytes,
+        originalSize, targetBytes,
       });
     }
 
-    const finalSize = bestOutput.length;
-
-    // Reject if absurdly small
-    if (finalSize < MIN_VALID) {
-      console.log(`[${id}] REJECTED final ${fmtKB(finalSize)} < minValid ${fmtKB(MIN_VALID)}`);
+    const finalSz = bestOutput.length;
+    if (finalSz < MIN_VALID) {
+      console.log(`[${id}] REJECTED: ${fmtKB(finalSz)} < minValid ${fmtKB(MIN_VALID)}`);
       return res.status(422).json({
-        error: `Over-compressed: got ${fmtKB(finalSize)}, expected ~${fmtKB(targetBytes)}`,
-        originalSize,
-        targetBytes,
+        error: `Over-compressed: got ${fmtKB(finalSz)}, expected ~${fmtKB(targetBytes)}`,
       });
     }
 
-    console.log(`[${id}] ✅ FINAL size=${fmtKB(finalSize)} target=${fmtKB(targetBytes)} diff=${fmtKB(targetBytes - finalSize)}`);
+    console.log(`[${id}] ✅ FINAL=${fmtKB(finalSz)} target=${fmtKB(targetBytes)} diff=${fmtKB(targetBytes - finalSz)}`);
     return sendResult(res, bestOutput, originalSize);
 
   } catch (err) {
@@ -331,13 +301,10 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────
-//  HELPERS
-// ─────────────────────────────────────────────
 function sendResult(res, buf, originalSize) {
   res.json({
-    success:        true,
-    pdfBase64:      buf.toString('base64'),
+    success: true,
+    pdfBase64: buf.toString('base64'),
     originalSize,
     compressedSize: buf.length,
   });
@@ -346,7 +313,6 @@ function sendResult(res, buf, originalSize) {
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function fmtKB(b) { return (b / 1024).toFixed(1) + 'KB'; }
 
-// ─────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`✅ Server on port ${PORT}`);
   console.log(`Ghostscript: ${checkGS()}`);
