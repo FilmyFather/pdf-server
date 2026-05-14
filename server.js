@@ -52,7 +52,7 @@ function runGS(inputPath, outputPath, opts = {}) {
     '-dColorImageDownsampleType=/Bicubic',
     `-dColorImageResolution=${dpi}`,
     '-dColorImageFilter=/DCTEncode',
-    `-/ColorACSImageDict << /QFactor ${(100 - jpegQ) / 100 * 0.9 + 0.05} /Blend 1 /HSamples [1 1 1 1] /VSamples [1 1 1 1] >> def`,
+
 
     // Gray images
     '-dDownsampleGrayImages=true',
