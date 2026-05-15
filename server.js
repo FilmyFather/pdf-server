@@ -26,11 +26,12 @@ function checkGS() {
 
 // Find a writable temp directory
 function getWritableDir() {
+  // /app/tmp confirmed writable on Render
   const candidates = [
+    '/app/tmp',
     path.join(process.cwd(), 'tmp'),
     '/tmp',
     os.tmpdir(),
-    '/var/tmp',
   ];
   for (const d of candidates) {
     try {
