@@ -25,13 +25,11 @@ function checkGS() {
 }
 
 function getWritableDir() {
-  const candidates = ['/app/tmp', path.join(process.cwd(), 'tmp'), '/tmp', os.tmpdir()];
-  for (const d of candidates) {
+  for (const d of ['/app/tmp', path.join(process.cwd(), 'tmp'), '/tmp', os.tmpdir()]) {
     try {
       fs.mkdirSync(d, { recursive: true });
-      const t = path.join(d, `.test_${Date.now()}`);
-      fs.writeFileSync(t, 'x');
-      fs.unlinkSync(t);
+      const t = path.join(d, `.t${Date.now()}`);
+      fs.writeFileSync(t, 'x'); fs.unlinkSync(t);
       return d;
     } catch (e) {}
   }
@@ -39,253 +37,230 @@ function getWritableDir() {
 }
 
 app.get('/', (req, res) => {
-  res.json({ status: 'PDF Compressor Running', ghostscript: checkGS() });
+  res.json({ status: 'PDF Compressor Running', gs: checkGS() });
 });
 
-app.get('/test-gs', (req, res) => {
+// ── DEBUG: Upload real PDF and test GS directly ──
+app.get('/debug', (req, res) => {
+  res.send(`
+    <html><body style="font-family:monospace;padding:20px">
+    <h2>GS Debug Test</h2>
+    <form method="POST" action="/debug-test" enctype="multipart/form-data">
+      <input type="file" name="pdf" accept="application/pdf" required/><br/><br/>
+      Target KB: <input type="number" name="targetKB" value="999"/><br/><br/>
+      <button type="submit">Test Compress</button>
+    </form>
+    </body></html>
+  `);
+});
+
+app.post('/debug-test', upload.single('pdf'), (req, res) => {
+  const id = uuidv4().slice(0,8);
+  let tmpDir = null;
   try {
+    const pdfBuf = req.file.buffer;
+    const targetKB = parseInt(req.body.targetKB) || 999;
+    const targetBytes = targetKB * 1024;
+
     const baseDir = getWritableDir();
-    const inp = path.join(baseDir, 'test_in.pdf');
-    const out = path.join(baseDir, 'test_out.pdf');
+    tmpDir = path.join(baseDir, `pdf-${id}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
 
-    const minPDF = `%PDF-1.4
-1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
-2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
-3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj
-xref
-0 4
-0000000000 65535 f
-0000000009 00000 n
-0000000058 00000 n
-0000000115 00000 n
-trailer<</Size 4/Root 1 0 R>>
-startxref
-190
-%%EOF`;
+    const inputPath = path.join(tmpDir, 'input.pdf');
+    fs.writeFileSync(inputPath, pdfBuf);
 
-    fs.writeFileSync(inp, minPDF);
+    const logs = [];
+    logs.push(`Original: ${(pdfBuf.length/1024).toFixed(1)}KB`);
+    logs.push(`Target: ${targetKB}KB`);
+    logs.push(`tmpDir: ${tmpDir}`);
+    logs.push(`GS: ${checkGS()}`);
 
-    const result = spawnSync('gs', [
+    // Test with one DPI
+    const outPath = path.join(tmpDir, 'out.pdf');
+    const args = [
       '-dNOSAFER', '-dNOPAUSE', '-dBATCH', '-dQUIET',
       '-sDEVICE=pdfwrite',
-      `-sOutputFile=${out}`,
-      inp,
-    ], { timeout: 15000 });
+      '-dCompatibilityLevel=1.4',
+      '-dPDFSETTINGS=/ebook',
+      '-dDownsampleColorImages=true',
+      '-dColorImageDownsampleType=/Bicubic',
+      '-dColorImageResolution=150',
+      '-dDownsampleGrayImages=true',
+      '-dGrayImageDownsampleType=/Bicubic',
+      '-dGrayImageResolution=150',
+      '-dDownsampleMonoImages=true',
+      '-dMonoImageResolution=300',
+      `-sOutputFile=${outPath}`,
+      inputPath,
+    ];
 
-    const outputSize = fs.existsSync(out) ? fs.statSync(out).size : 0;
-    try { fs.unlinkSync(inp); fs.unlinkSync(out); } catch(_) {}
+    logs.push(`\nGS command:\ngs ${args.join(' ')}\n`);
 
-    res.json({
-      status: result.status,
-      inputWritten: fs.existsSync(inp) || true,
-      outputCreated: outputSize > 0,
-      outputSize,
-      stderr: (result.stderr||Buffer.alloc(0)).toString().slice(0,500),
-      baseDir,
-      gsVersion: checkGS(),
-    });
-  } catch(e) { res.json({ error: e.message }); }
+    const result = spawnSync('gs', args, { timeout: 60000, maxBuffer: 250*1024*1024 });
+    const stderr = (result.stderr||Buffer.alloc(0)).toString();
+    const stdout = (result.stdout||Buffer.alloc(0)).toString();
+
+    logs.push(`GS exit status: ${result.status}`);
+    logs.push(`GS stderr: "${stderr}"`);
+    logs.push(`GS stdout: "${stdout}"`);
+    logs.push(`Output exists: ${fs.existsSync(outPath)}`);
+
+    if (fs.existsSync(outPath)) {
+      const outSz = fs.statSync(outPath).size;
+      logs.push(`Output size: ${(outSz/1024).toFixed(1)}KB`);
+    }
+
+    res.send(`<pre style="font-family:monospace;padding:20px">${logs.join('\n')}</pre>`);
+  } catch(e) {
+    res.send(`<pre>ERROR: ${e.message}\n${e.stack}</pre>`);
+  } finally {
+    if(tmpDir) try { fs.rmSync(tmpDir, {recursive:true,force:true}); } catch(_) {}
+  }
 });
 
-// ── GS runner — NO -dJPEGQ (deprecated in GS 10) ──
+// ── MAIN COMPRESS ──
 function runGS(inputPath, outputPath, dpi, preset) {
-  // GS 10.x uses -dColorImageResolution etc — no -dJPEGQ needed
-  // Quality is controlled via preset + DPI only
   const args = [
-    '-dNOSAFER',
-    '-dNOPAUSE',
-    '-dBATCH',
-    '-dQUIET',
+    '-dNOSAFER', '-dNOPAUSE', '-dBATCH', '-dQUIET',
     '-sDEVICE=pdfwrite',
     '-dCompatibilityLevel=1.4',
     `-dPDFSETTINGS=${preset}`,
     '-dDetectDuplicateImages=true',
     '-dCompressFonts=true',
     '-dSubsetFonts=true',
-    // Color
     '-dDownsampleColorImages=true',
     '-dColorImageDownsampleType=/Bicubic',
     `-dColorImageResolution=${dpi}`,
-    // Gray
     '-dDownsampleGrayImages=true',
     '-dGrayImageDownsampleType=/Bicubic',
     `-dGrayImageResolution=${dpi}`,
-    // Mono
     '-dDownsampleMonoImages=true',
     '-dMonoImageDownsampleType=/Bicubic',
-    `-dMonoImageResolution=${Math.min(dpi * 2, 300)}`,
+    `-dMonoImageResolution=${Math.min(dpi*2,300)}`,
     `-sOutputFile=${outputPath}`,
     inputPath,
   ];
 
-  const result = spawnSync('gs', args, {
-    timeout: 60000,
-    maxBuffer: 250 * 1024 * 1024,
-  });
+  const result = spawnSync('gs', args, { timeout: 60000, maxBuffer: 250*1024*1024 });
+  const stderr = (result.stderr||Buffer.alloc(0)).toString();
 
-  const stderr = (result.stderr || Buffer.alloc(0)).toString();
-
-  if (result.status !== 0) {
-    throw new Error(`GS exit ${result.status}: ${stderr.slice(0,300)}`);
-  }
-  if (!fs.existsSync(outputPath)) {
-    throw new Error(`No output file. stderr: ${stderr.slice(0,200)}`);
-  }
+  if (result.status !== 0) throw new Error(`GS exit ${result.status}: ${stderr.slice(0,300)}`);
+  if (!fs.existsSync(outputPath)) throw new Error(`No output. stderr: ${stderr.slice(0,200)}`);
 
   const sz = fs.statSync(outputPath).size;
-  if (sz < 50 * 1024) {
-    throw new Error(`Output too small: ${(sz/1024).toFixed(1)}KB. stderr: ${stderr.slice(0,200)}`);
-  }
+  if (sz < 50*1024) throw new Error(`Too small: ${(sz/1024).toFixed(1)}KB stderr: ${stderr.slice(0,200)}`);
   return sz;
 }
 
-// ── COMPRESS ROUTE ──
 app.post('/compress', upload.single('pdf'), async (req, res) => {
-  const id = uuidv4().slice(0, 8);
+  const id = uuidv4().slice(0,8);
   let tmpDir = null;
 
   try {
     let pdfBuf;
-    if (req.file) {
-      pdfBuf = req.file.buffer;
-    } else if (req.body?.pdfBase64) {
-      pdfBuf = Buffer.from(req.body.pdfBase64, 'base64');
-    } else {
-      return res.status(400).json({ error: 'No PDF provided' });
-    }
+    if (req.file) pdfBuf = req.file.buffer;
+    else if (req.body?.pdfBase64) pdfBuf = Buffer.from(req.body.pdfBase64,'base64');
+    else return res.status(400).json({ error: 'No PDF' });
 
-    const targetBytes = parseInt(req.body?.targetBytes || req.query?.targetBytes);
-    if (!targetBytes || isNaN(targetBytes)) {
-      return res.status(400).json({ error: 'Invalid targetBytes' });
-    }
+    const targetBytes = parseInt(req.body?.targetBytes||req.query?.targetBytes);
+    if (!targetBytes||isNaN(targetBytes)) return res.status(400).json({ error: 'No targetBytes' });
 
     const baseDir = getWritableDir();
     tmpDir = path.join(baseDir, `pdf-${id}`);
     fs.mkdirSync(tmpDir, { recursive: true });
     const inputPath = path.join(tmpDir, 'input.pdf');
-
     fs.writeFileSync(inputPath, pdfBuf);
-    const originalSize = pdfBuf.length;
-    const TOLERANCE = 10 * 1024;
-    const MIN_VALID = targetBytes * 0.85;
 
-    console.log(`[${id}] original=${fmtKB(originalSize)} target=${fmtKB(targetBytes)} dir=${tmpDir}`);
+    const originalSize = pdfBuf.length;
+    const TOLERANCE = 10*1024;
+    const MIN_VALID = targetBytes*0.85;
+
+    console.log(`[${id}] original=${fmtKB(originalSize)} target=${fmtKB(targetBytes)}`);
 
     if (originalSize <= targetBytes) return sendResult(res, pdfBuf, originalSize);
 
-    let bestOutput = null;
-    let bestDiff = Infinity;
+    let bestOutput = null, bestDiff = Infinity;
 
-    // Presets mapped to DPI ranges
-    // Higher DPI = better quality = bigger file
-    const configs = [
-      { dpi: 250, preset: '/printer' },
-      { dpi: 200, preset: '/ebook'   },
-      { dpi: 150, preset: '/ebook'   },
-      { dpi: 120, preset: '/screen'  },
-      { dpi:  96, preset: '/screen'  },
-      { dpi:  72, preset: '/screen'  },
-      { dpi:  55, preset: '/screen'  },
+    // Probe configs — DPI only, no JPEGQ
+    const probes = [
+      { dpi:250, preset:'/printer' },
+      { dpi:200, preset:'/ebook'   },
+      { dpi:150, preset:'/ebook'   },
+      { dpi:120, preset:'/screen'  },
+      { dpi: 96, preset:'/screen'  },
+      { dpi: 72, preset:'/screen'  },
+      { dpi: 55, preset:'/screen'  },
     ];
 
-    // PHASE 1: Find two configs that bracket the target
-    let loConfig = null, hiConfig = null;
+    let hiDPI = 250, loDPI = 55;
 
-    for (const [ci, cfg] of configs.entries()) {
-      const out = path.join(tmpDir, `probe_${ci}.pdf`);
+    for (const [pi, cfg] of probes.entries()) {
+      const out = path.join(tmpDir, `p${pi}.pdf`);
       try {
         const sz = runGS(inputPath, out, cfg.dpi, cfg.preset);
         const diff = targetBytes - sz;
         console.log(`[${id}] probe dpi=${cfg.dpi} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
 
         if (diff >= 0) {
-          // Under target — valid
-          if (!loConfig) loConfig = { ...cfg, sz };
-          if (diff < bestDiff) {
-            bestDiff = diff;
-            bestOutput = fs.readFileSync(out);
-          }
-          if (diff <= TOLERANCE) {
-            console.log(`[${id}] ✓ Perfect probe!`);
-            return sendResult(res, bestOutput, originalSize);
-          }
-          break; // Found first valid — stop probing lower
+          loDPI = cfg.dpi;
+          if (diff < bestDiff) { bestDiff=diff; bestOutput=fs.readFileSync(out); }
+          if (diff <= TOLERANCE) return sendResult(res, bestOutput, originalSize);
+          break;
         } else {
-          hiConfig = { ...cfg, sz }; // Over target — keep as upper bound
+          hiDPI = cfg.dpi;
         }
       } catch(e) {
-        console.log(`[${id}] probe dpi=${cfg.dpi} failed: ${e.message}`);
+        console.log(`[${id}] probe${pi} err: ${e.message}`);
       }
     }
 
-    // PHASE 2: Binary search on DPI between hiConfig and loConfig
-    const dpiLo = loConfig ? loConfig.dpi : 55;
-    const dpiHi = hiConfig ? hiConfig.dpi : 250;
-    let lo = dpiLo, hi = dpiHi;
+    // Binary search between hiDPI and loDPI
+    let lo = loDPI, hi = hiDPI;
+    console.log(`[${id}] BinSearch dpi=[${lo}-${hi}]`);
 
-    console.log(`[${id}] Binary search dpi=[${lo}-${hi}]`);
-
-    for (let iter = 0; iter < 16; iter++) {
+    for (let iter=0; iter<16; iter++) {
       if (lo > hi) break;
-      const dpiMid = Math.round((lo + hi) / 2);
-      const preset = dpiMid >= 200 ? '/printer' : dpiMid >= 120 ? '/ebook' : '/screen';
-      const out = path.join(tmpDir, `bs_${iter}.pdf`);
+      const mid = Math.round((lo+hi)/2);
+      const preset = mid>=200?'/printer':mid>=120?'/ebook':'/screen';
+      const out = path.join(tmpDir, `bs${iter}.pdf`);
 
       let sz;
-      try {
-        sz = runGS(inputPath, out, dpiMid, preset);
-      } catch(e) {
-        console.log(`[${id}] bs${iter} dpi=${dpiMid} failed: ${e.message}`);
-        hi = dpiMid - 1;
-        continue;
-      }
+      try { sz = runGS(inputPath, out, mid, preset); }
+      catch(e) { console.log(`[${id}] bs${iter} err: ${e.message}`); hi=mid-1; continue; }
 
       const diff = targetBytes - sz;
-      console.log(`[${id}] bs${iter} dpi=${dpiMid} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
+      console.log(`[${id}] bs${iter} dpi=${mid} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
 
       if (diff >= 0) {
-        if (diff < bestDiff) {
-          bestDiff = diff;
-          bestOutput = fs.readFileSync(out);
-        }
+        if (diff < bestDiff) { bestDiff=diff; bestOutput=fs.readFileSync(out); }
         if (diff <= TOLERANCE) break;
-        lo = dpiMid + 1;
+        lo = mid+1;
       } else {
-        hi = dpiMid - 1;
+        hi = mid-1;
       }
     }
 
-    // FINAL
-    if (!bestOutput) {
-      return res.status(422).json({ error: 'Could not reach target size', originalSize, targetBytes });
-    }
+    if (!bestOutput) return res.status(422).json({ error:'Could not reach target', originalSize, targetBytes });
+    if (bestOutput.length < MIN_VALID) return res.status(422).json({ error:`Over-compressed: ${fmtKB(bestOutput.length)}` });
 
-    const finalSz = bestOutput.length;
-    if (finalSz < MIN_VALID) {
-      return res.status(422).json({ error: `Over-compressed: ${fmtKB(finalSz)} vs ${fmtKB(targetBytes)}` });
-    }
-
-    console.log(`[${id}] ✅ FINAL=${fmtKB(finalSz)} target=${fmtKB(targetBytes)} diff=${fmtKB(targetBytes - finalSz)}`);
+    console.log(`[${id}] ✅ FINAL=${fmtKB(bestOutput.length)} diff=${fmtKB(targetBytes-bestOutput.length)}`);
     return sendResult(res, bestOutput, originalSize);
 
   } catch(err) {
     console.error(`[${id}] FATAL:`, err.message);
     res.status(500).json({ error: err.message });
   } finally {
-    if (tmpDir) try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch(_) {}
+    if (tmpDir) try { fs.rmSync(tmpDir,{recursive:true,force:true}); } catch(_) {}
   }
 });
 
 function sendResult(res, buf, originalSize) {
-  res.json({ success: true, pdfBase64: buf.toString('base64'), originalSize, compressedSize: buf.length });
+  res.json({ success:true, pdfBase64:buf.toString('base64'), originalSize, compressedSize:buf.length });
 }
 function fmtKB(b) { return (b/1024).toFixed(1)+'KB'; }
 
-// Pre-create writable dir
-try { fs.mkdirSync('/app/tmp', { recursive: true }); } catch(_) {}
+try { fs.mkdirSync('/app/tmp',{recursive:true}); } catch(_) {}
 
 app.listen(PORT, () => {
-  console.log(`✅ Server on port ${PORT}`);
-  console.log(`GS: ${checkGS()}`);
-  try { console.log(`Writable: ${getWritableDir()}`); } catch(e) { console.log('No writable dir!'); }
+  console.log(`✅ Port ${PORT} | GS: ${checkGS()} | Dir: ${getWritableDir()}`);
 });
