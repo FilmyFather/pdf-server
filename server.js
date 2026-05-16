@@ -24,6 +24,13 @@ function checkGS() {
   } catch (e) { return 'not found'; }
 }
 
+function checkQPDF() {
+  try {
+    const r = spawnSync('qpdf', ['--version']);
+    return r.status === 0 ? 'available' : 'error';
+  } catch (e) { return 'not found'; }
+}
+
 function getWritableDir() {
   for (const d of ['/app/tmp', path.join(process.cwd(), 'tmp'), '/tmp', os.tmpdir()]) {
     try {
@@ -37,18 +44,38 @@ function getWritableDir() {
 }
 
 app.get('/', (req, res) => {
-  res.json({ status: 'PDF Compressor Running', gs: checkGS() });
+  res.json({ status: 'PDF Compressor Running', gs: checkGS(), qpdf: checkQPDF() });
 });
 
-// ── GS runner — using execFileSync with env override ──
-function runGS(inputPath, outputPath, dpi, preset) {
-  const { execFileSync } = require('child_process');
+// ── STEP 1: Repair with qpdf (handles stream/circular ref errors) ──
+function repairWithQPDF(inputPath, outputPath) {
+  const result = spawnSync('qpdf', [
+    '--linearize',
+    '--replace-input',
+    '--warning-exit-0',
+    inputPath,
+    outputPath,
+  ], { timeout: 30000, maxBuffer: 250*1024*1024 });
 
-  const gsArgs = [
-    '-dNOSAFER',
-    '-dNOPAUSE',
-    '-dBATCH',
-    '-dPDFRECOVER',
+  if (!fs.existsSync(outputPath)) {
+    // Try without --linearize
+    const r2 = spawnSync('qpdf', [
+      '--warning-exit-0',
+      inputPath,
+      outputPath,
+    ], { timeout: 30000, maxBuffer: 250*1024*1024 });
+  }
+
+  if (!fs.existsSync(outputPath)) throw new Error('qpdf repair failed');
+  const sz = fs.statSync(outputPath).size;
+  if (sz < 1024) throw new Error(`qpdf output too small: ${sz}`);
+  return sz;
+}
+
+// ── STEP 2: Compress with GS ──
+function runGS(inputPath, outputPath, dpi, preset) {
+  const args = [
+    '-dNOSAFER', '-dNOPAUSE', '-dBATCH', '-dQUIET',
     '-sDEVICE=pdfwrite',
     '-dCompatibilityLevel=1.4',
     `-dPDFSETTINGS=${preset}`,
@@ -68,26 +95,31 @@ function runGS(inputPath, outputPath, dpi, preset) {
     inputPath,
   ];
 
-  try {
-    execFileSync('gs', gsArgs, {
-      timeout: 60000,
-      maxBuffer: 250 * 1024 * 1024,
-      env: { ...process.env, GS_OPTIONS: '' }, // clear any GS env that might interfere
-    });
-  } catch(e) {
-    throw new Error(`GS failed: ${e.message.slice(0,300)}`);
-  }
+  const result = spawnSync('gs', args, {
+    timeout: 60000,
+    maxBuffer: 250 * 1024 * 1024,
+    env: { ...process.env, GS_OPTIONS: '' },
+  });
 
+  const stdout = (result.stdout||Buffer.alloc(0)).toString();
+  const stderr = (result.stderr||Buffer.alloc(0)).toString();
+
+  if (stdout.includes("Couldn't initialise file") || stdout.includes('No pages will be processed')) {
+    throw new Error(`GS stream error: ${stdout.slice(0,200)}`);
+  }
+  if (result.status !== 0) throw new Error(`GS exit ${result.status}: ${stderr.slice(0,200)}`);
   if (!fs.existsSync(outputPath)) throw new Error('No output file');
+
   const sz = fs.statSync(outputPath).size;
-  if (sz < 50 * 1024) throw new Error(`Too small: ${(sz/1024).toFixed(1)}KB`);
+  if (sz < 50*1024) throw new Error(`Too small: ${(sz/1024).toFixed(1)}KB`);
   return sz;
 }
 
 // ── DEBUG ──
 app.get('/debug', (req, res) => {
   res.send(`<html><body style="font-family:monospace;padding:20px">
-    <h2>GS Debug</h2>
+    <h2>PDF Debug (qpdf + GS)</h2>
+    <p>GS: ${checkGS()} | qpdf: ${checkQPDF()}</p>
     <form method="POST" action="/debug-test" enctype="multipart/form-data">
       <input type="file" name="pdf" accept="application/pdf" required/><br/><br/>
       Target KB: <input type="number" name="targetKB" value="999"/><br/><br/>
@@ -96,7 +128,6 @@ app.get('/debug', (req, res) => {
 });
 
 app.post('/debug-test', upload.single('pdf'), (req, res) => {
-  const { execFileSync } = require('child_process');
   const id = uuidv4().slice(0,8);
   let tmpDir = null;
   try {
@@ -104,20 +135,34 @@ app.post('/debug-test', upload.single('pdf'), (req, res) => {
     const baseDir = getWritableDir();
     tmpDir = path.join(baseDir, `pdf-${id}`);
     fs.mkdirSync(tmpDir, { recursive: true });
-    const inputPath = path.join(tmpDir, 'input.pdf');
-    const outPath   = path.join(tmpDir, 'out.pdf');
+
+    const inputPath    = path.join(tmpDir, 'input.pdf');
+    const repairedPath = path.join(tmpDir, 'repaired.pdf');
+    const outPath      = path.join(tmpDir, 'out.pdf');
     fs.writeFileSync(inputPath, pdfBuf);
 
     const logs = [
       `Original: ${(pdfBuf.length/1024).toFixed(1)}KB`,
-      `GS: ${checkGS()}`,
-      `tmpDir: ${tmpDir}`,
-      `Input exists: ${fs.existsSync(inputPath)}`,
-      `Input size: ${fs.statSync(inputPath).size}`,
+      `GS: ${checkGS()} | qpdf: ${checkQPDF()}`,
     ];
 
+    // Step 1: qpdf repair
+    const qpdfResult = spawnSync('qpdf', [
+      '--warning-exit-0', inputPath, repairedPath,
+    ], { timeout: 30000, maxBuffer: 250*1024*1024 });
+
+    logs.push(`qpdf exit: ${qpdfResult.status}`);
+    logs.push(`qpdf stderr: "${(qpdfResult.stderr||Buffer.alloc(0)).toString().slice(0,200)}"`);
+    if (fs.existsSync(repairedPath)) {
+      logs.push(`Repaired: ${(fs.statSync(repairedPath).size/1024).toFixed(1)}KB ✅`);
+    } else {
+      logs.push('qpdf repair failed ❌');
+    }
+
+    // Step 2: GS compress
+    const workInput = fs.existsSync(repairedPath) ? repairedPath : inputPath;
     const gsArgs = [
-      '-dNOSAFER', '-dNOPAUSE', '-dBATCH', '-dPDFRECOVER',
+      '-dNOSAFER', '-dNOPAUSE', '-dBATCH', '-dQUIET',
       '-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4',
       '-dPDFSETTINGS=/ebook',
       '-dDownsampleColorImages=true', '-dColorImageDownsampleType=/Bicubic',
@@ -125,49 +170,29 @@ app.post('/debug-test', upload.single('pdf'), (req, res) => {
       '-dDownsampleGrayImages=true', '-dGrayImageDownsampleType=/Bicubic',
       '-dGrayImageResolution=150',
       '-dDownsampleMonoImages=true', '-dMonoImageResolution=300',
-      `-sOutputFile=${outPath}`,
-      inputPath,
+      `-sOutputFile=${outPath}`, workInput,
     ];
 
-    logs.push(`\nCommand: gs ${gsArgs.join(' ')}\n`);
+    const gsResult = spawnSync('gs', gsArgs, {
+      timeout: 60000, maxBuffer: 250*1024*1024,
+      env: { ...process.env, GS_OPTIONS: '' },
+    });
 
-    let exitCode = 0, stdout = '', stderr = '';
-    try {
-      const result = spawnSync('gs', gsArgs, {
-        timeout: 60000,
-        maxBuffer: 250*1024*1024,
-        env: { ...process.env, GS_OPTIONS: '' },
-      });
-      exitCode = result.status;
-      stdout   = (result.stdout||Buffer.alloc(0)).toString();
-      stderr   = (result.stderr||Buffer.alloc(0)).toString();
-    } catch(e) {
-      logs.push(`Exception: ${e.message}`);
-    }
+    const gsStdout = (gsResult.stdout||Buffer.alloc(0)).toString();
+    const gsStderr = (gsResult.stderr||Buffer.alloc(0)).toString();
+    logs.push(`\nGS exit: ${gsResult.status}`);
+    logs.push(`GS stdout: "${gsStdout.slice(0,300)}"`);
+    logs.push(`GS stderr: "${gsStderr.slice(0,200)}"`);
 
-    logs.push(`Exit: ${exitCode}`);
-    logs.push(`stdout: "${stdout}"`);
-    logs.push(`stderr: "${stderr}"`);
-    logs.push(`Output exists: ${fs.existsSync(outPath)}`);
     if (fs.existsSync(outPath)) {
-      logs.push(`Output size: ${(fs.statSync(outPath).size/1024).toFixed(1)}KB`);
-    }
-
-    // Also try with ps2pdf approach
-    const ps2out = path.join(tmpDir, 'ps2pdf_out.pdf');
-    try {
-      const ps2result = spawnSync('ps2pdf', [inputPath, ps2out], {
-        timeout: 60000, maxBuffer: 250*1024*1024,
-      });
-      logs.push(`\nps2pdf exit: ${ps2result.status}`);
-      if (fs.existsSync(ps2out)) logs.push(`ps2pdf output: ${(fs.statSync(ps2out).size/1024).toFixed(1)}KB`);
-    } catch(e) {
-      logs.push(`ps2pdf not available: ${e.message}`);
+      logs.push(`✅ Output: ${(fs.statSync(outPath).size/1024).toFixed(1)}KB`);
+    } else {
+      logs.push('❌ No GS output');
     }
 
     res.send(`<pre>${logs.join('\n')}</pre>`);
   } catch(e) {
-    res.send(`<pre>ERROR: ${e.message}\n${e.stack}</pre>`);
+    res.send(`<pre>ERROR: ${e.message}</pre>`);
   } finally {
     if(tmpDir) try { fs.rmSync(tmpDir,{recursive:true,force:true}); } catch(_) {}
   }
@@ -187,10 +212,11 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
     const targetBytes = parseInt(req.body?.targetBytes||req.query?.targetBytes);
     if (!targetBytes||isNaN(targetBytes)) return res.status(400).json({ error: 'No targetBytes' });
 
-    const baseDir = getWritableDir();
+    const baseDir  = getWritableDir();
     tmpDir = path.join(baseDir, `pdf-${id}`);
     fs.mkdirSync(tmpDir, { recursive: true });
-    const inputPath = path.join(tmpDir, 'input.pdf');
+    const inputPath    = path.join(tmpDir, 'input.pdf');
+    const repairedPath = path.join(tmpDir, 'repaired.pdf');
     fs.writeFileSync(inputPath, pdfBuf);
 
     const originalSize = pdfBuf.length;
@@ -200,6 +226,19 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
     console.log(`[${id}] original=${fmtKB(originalSize)} target=${fmtKB(targetBytes)}`);
     if (originalSize <= targetBytes) return sendResult(res, pdfBuf, originalSize);
 
+    // STEP 1: Repair with qpdf
+    let workInput = inputPath;
+    const qr = spawnSync('qpdf', ['--warning-exit-0', inputPath, repairedPath], {
+      timeout: 30000, maxBuffer: 250*1024*1024,
+    });
+    if (fs.existsSync(repairedPath) && fs.statSync(repairedPath).size > 1024) {
+      console.log(`[${id}] qpdf repaired: ${fmtKB(fs.statSync(repairedPath).size)}`);
+      workInput = repairedPath;
+    } else {
+      console.log(`[${id}] qpdf failed (exit ${qr.status}), using original`);
+    }
+
+    // STEP 2: Probe + Binary search
     let bestOutput = null, bestDiff = Infinity;
 
     const probes = [
@@ -217,7 +256,7 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
     for (const [pi, cfg] of probes.entries()) {
       const out = path.join(tmpDir, `p${pi}.pdf`);
       try {
-        const sz   = runGS(inputPath, out, cfg.dpi, cfg.preset);
+        const sz   = runGS(workInput, out, cfg.dpi, cfg.preset);
         const diff = targetBytes - sz;
         console.log(`[${id}] probe dpi=${cfg.dpi} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
         if (diff >= 0) {
@@ -242,8 +281,8 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
       const preset = mid>=200?'/printer':mid>=120?'/ebook':'/screen';
       const out    = path.join(tmpDir, `bs${iter}.pdf`);
       let sz;
-      try { sz = runGS(inputPath, out, mid, preset); }
-      catch(e) { console.log(`[${id}] bs${iter} err: ${e.message}`); hi=mid-1; continue; }
+      try { sz = runGS(workInput, out, mid, preset); }
+      catch(e) { console.log(`[${id}] bs${iter}: ${e.message}`); hi=mid-1; continue; }
       const diff = targetBytes - sz;
       console.log(`[${id}] bs${iter} dpi=${mid} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
       if (diff >= 0) {
@@ -275,5 +314,5 @@ function fmtKB(b) { return (b/1024).toFixed(1)+'KB'; }
 try { fs.mkdirSync('/app/tmp',{recursive:true}); } catch(_) {}
 
 app.listen(PORT, () => {
-  console.log(`✅ Port ${PORT} | GS: ${checkGS()} | Dir: ${getWritableDir()}`);
+  console.log(`✅ Port ${PORT} | GS: ${checkGS()} | qpdf: ${checkQPDF()} | Dir: ${getWritableDir()}`);
 });
