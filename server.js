@@ -40,13 +40,40 @@ app.get('/', (req, res) => {
   res.json({ status: 'PDF Compressor Running', gs: checkGS() });
 });
 
-// ── GS runner — checks BOTH stderr AND stdout for errors ──
+// ── STEP 1: Repair PDF first using GS ──
+function repairPDF(inputPath, outputPath) {
+  // GS can repair corrupt PDFs by reading with error recovery
+  // Key flags: -dPDFRECOVER and no -dQUIET so errors are handled
+  const args = [
+    '-dNOSAFER',
+    '-dNOPAUSE', 
+    '-dBATCH',
+    '-dPDFRECOVER',        // Recover from PDF errors
+    '-dNOINTERPOLATE',
+    '-sDEVICE=pdfwrite',
+    '-dCompatibilityLevel=1.4',
+    '-dPDFSETTINGS=/prepress',  // Lossless repair
+    '-o', outputPath,
+    inputPath,
+  ];
+
+  const result = spawnSync('gs', args, { timeout: 60000, maxBuffer: 250*1024*1024 });
+  const stdout = (result.stdout||Buffer.alloc(0)).toString();
+  const stderr = (result.stderr||Buffer.alloc(0)).toString();
+
+  if (!fs.existsSync(outputPath)) throw new Error(`Repair failed: ${stderr.slice(0,200)}`);
+  const sz = fs.statSync(outputPath).size;
+  if (sz < 1024) throw new Error(`Repair output too small: ${sz} bytes`);
+  return sz;
+}
+
+// ── STEP 2: Compress repaired PDF ──
 function runGS(inputPath, outputPath, dpi, preset) {
-  // Key fix: use -o instead of -sOutputFile (GS 10 compatibility)
   const args = [
     '-dNOSAFER',
     '-dNOPAUSE',
     '-dBATCH',
+    '-dPDFRECOVER',
     '-sDEVICE=pdfwrite',
     '-dCompatibilityLevel=1.4',
     `-dPDFSETTINGS=${preset}`,
@@ -62,47 +89,31 @@ function runGS(inputPath, outputPath, dpi, preset) {
     '-dDownsampleMonoImages=true',
     '-dMonoImageDownsampleType=/Bicubic',
     `-dMonoImageResolution=${Math.min(dpi * 2, 300)}`,
-    `-o`, outputPath,  // GS 10: use -o instead of -sOutputFile
+    '-o', outputPath,
     inputPath,
   ];
 
-  const result = spawnSync('gs', args, {
-    timeout: 60000,
-    maxBuffer: 250 * 1024 * 1024,
-  });
+  const result = spawnSync('gs', args, { timeout: 60000, maxBuffer: 250*1024*1024 });
+  const stdout = (result.stdout||Buffer.alloc(0)).toString();
+  const stderr = (result.stderr||Buffer.alloc(0)).toString();
 
-  const stderr = (result.stderr || Buffer.alloc(0)).toString();
-  const stdout = (result.stdout || Buffer.alloc(0)).toString();
-
-  // Check stdout for GS errors (GS 10 puts errors in stdout!)
-  if (stdout.includes('Error') || stdout.includes('No pages will be processed')) {
-    throw new Error(`GS stdout error: ${stdout.slice(0, 300)}`);
-  }
-  if (result.status !== 0) {
-    throw new Error(`GS exit ${result.status}: ${stderr.slice(0, 300)}`);
-  }
-  if (!fs.existsSync(outputPath)) {
-    throw new Error(`No output file created`);
-  }
+  if (result.status !== 0) throw new Error(`GS exit ${result.status}: ${stderr.slice(0,200)}`);
+  if (!fs.existsSync(outputPath)) throw new Error(`No output created`);
 
   const sz = fs.statSync(outputPath).size;
-  if (sz < 50 * 1024) {
-    throw new Error(`Output too small: ${(sz/1024).toFixed(1)}KB. stdout: ${stdout.slice(0,200)}`);
-  }
+  if (sz < 50*1024) throw new Error(`Too small: ${(sz/1024).toFixed(1)}KB`);
   return sz;
 }
 
-// ── DEBUG endpoint ──
+// ── DEBUG ──
 app.get('/debug', (req, res) => {
-  res.send(`
-    <html><body style="font-family:monospace;padding:20px">
-    <h2>GS Debug Test</h2>
+  res.send(`<html><body style="font-family:monospace;padding:20px">
+    <h2>GS Debug</h2>
     <form method="POST" action="/debug-test" enctype="multipart/form-data">
       <input type="file" name="pdf" accept="application/pdf" required/><br/><br/>
       Target KB: <input type="number" name="targetKB" value="999"/><br/><br/>
-      <button type="submit">Test Compress</button>
-    </form></body></html>
-  `);
+      <button type="submit">Test</button>
+    </form></body></html>`);
 });
 
 app.post('/debug-test', upload.single('pdf'), (req, res) => {
@@ -110,18 +121,28 @@ app.post('/debug-test', upload.single('pdf'), (req, res) => {
   let tmpDir = null;
   try {
     const pdfBuf = req.file.buffer;
-    const targetKB = parseInt(req.body.targetKB) || 999;
     const baseDir = getWritableDir();
     tmpDir = path.join(baseDir, `pdf-${id}`);
     fs.mkdirSync(tmpDir, { recursive: true });
-    const inputPath = path.join(tmpDir, 'input.pdf');
-    const outPath = path.join(tmpDir, 'out.pdf');
+    const inputPath  = path.join(tmpDir, 'input.pdf');
+    const repairedPath = path.join(tmpDir, 'repaired.pdf');
+    const outPath    = path.join(tmpDir, 'out.pdf');
     fs.writeFileSync(inputPath, pdfBuf);
 
-    const logs = [`Original: ${(pdfBuf.length/1024).toFixed(1)}KB`, `Target: ${targetKB}KB`, `GS: ${checkGS()}`];
+    const logs = [`Original: ${(pdfBuf.length/1024).toFixed(1)}KB`, `GS: ${checkGS()}`];
 
+    // Step 1: Repair
+    try {
+      const repSz = repairPDF(inputPath, repairedPath);
+      logs.push(`Repaired: ${(repSz/1024).toFixed(1)}KB ✅`);
+    } catch(e) {
+      logs.push(`Repair failed: ${e.message}`);
+    }
+
+    // Step 2: Compress repaired
+    const workInput = fs.existsSync(repairedPath) ? repairedPath : inputPath;
     const args = [
-      '-dNOSAFER', '-dNOPAUSE', '-dBATCH',
+      '-dNOSAFER', '-dNOPAUSE', '-dBATCH', '-dPDFRECOVER',
       '-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4',
       '-dPDFSETTINGS=/ebook',
       '-dDownsampleColorImages=true', '-dColorImageDownsampleType=/Bicubic',
@@ -129,18 +150,17 @@ app.post('/debug-test', upload.single('pdf'), (req, res) => {
       '-dDownsampleGrayImages=true', '-dGrayImageDownsampleType=/Bicubic',
       '-dGrayImageResolution=150',
       '-dDownsampleMonoImages=true', '-dMonoImageResolution=300',
-      '-o', outPath, inputPath,
+      '-o', outPath, workInput,
     ];
 
-    logs.push(`\nCommand: gs ${args.join(' ')}\n`);
     const result = spawnSync('gs', args, { timeout: 60000, maxBuffer: 250*1024*1024 });
     const stderr = (result.stderr||Buffer.alloc(0)).toString();
     const stdout = (result.stdout||Buffer.alloc(0)).toString();
-    logs.push(`Exit: ${result.status}`);
-    logs.push(`stdout: "${stdout}"`);
-    logs.push(`stderr: "${stderr}"`);
-    logs.push(`Output exists: ${fs.existsSync(outPath)}`);
-    if (fs.existsSync(outPath)) logs.push(`Output size: ${(fs.statSync(outPath).size/1024).toFixed(1)}KB`);
+    logs.push(`Compress exit: ${result.status}`);
+    logs.push(`stdout: "${stdout.slice(0,300)}"`);
+    logs.push(`stderr: "${stderr.slice(0,300)}"`);
+    if (fs.existsSync(outPath)) logs.push(`✅ Output: ${(fs.statSync(outPath).size/1024).toFixed(1)}KB`);
+    else logs.push(`❌ No output`);
 
     res.send(`<pre>${logs.join('\n')}</pre>`);
   } catch(e) {
@@ -161,23 +181,38 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
     else if (req.body?.pdfBase64) pdfBuf = Buffer.from(req.body.pdfBase64,'base64');
     else return res.status(400).json({ error: 'No PDF' });
 
-    const targetBytes = parseInt(req.body?.targetBytes || req.query?.targetBytes);
-    if (!targetBytes || isNaN(targetBytes)) return res.status(400).json({ error: 'No targetBytes' });
+    const targetBytes = parseInt(req.body?.targetBytes||req.query?.targetBytes);
+    if (!targetBytes||isNaN(targetBytes)) return res.status(400).json({ error: 'No targetBytes' });
 
     const baseDir = getWritableDir();
     tmpDir = path.join(baseDir, `pdf-${id}`);
     fs.mkdirSync(tmpDir, { recursive: true });
-    const inputPath = path.join(tmpDir, 'input.pdf');
+    const inputPath    = path.join(tmpDir, 'input.pdf');
+    const repairedPath = path.join(tmpDir, 'repaired.pdf');
     fs.writeFileSync(inputPath, pdfBuf);
 
     const originalSize = pdfBuf.length;
-    const TOLERANCE = 10 * 1024;
-    const MIN_VALID = targetBytes * 0.85;
+    const TOLERANCE    = 10*1024;
+    const MIN_VALID    = targetBytes*0.85;
 
     console.log(`[${id}] original=${fmtKB(originalSize)} target=${fmtKB(targetBytes)}`);
-
     if (originalSize <= targetBytes) return sendResult(res, pdfBuf, originalSize);
 
+    // STEP 1: Repair PDF
+    let workInput = inputPath;
+    try {
+      const repSz = repairPDF(inputPath, repairedPath);
+      console.log(`[${id}] Repaired: ${fmtKB(repSz)}`);
+      workInput = repairedPath;
+      // If repaired is already under target
+      if (repSz <= targetBytes) {
+        return sendResult(res, fs.readFileSync(repairedPath), originalSize);
+      }
+    } catch(e) {
+      console.log(`[${id}] Repair failed (using original): ${e.message}`);
+    }
+
+    // STEP 2: Compress with binary search on DPI
     let bestOutput = null, bestDiff = Infinity;
 
     const probes = [
@@ -195,13 +230,12 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
     for (const [pi, cfg] of probes.entries()) {
       const out = path.join(tmpDir, `p${pi}.pdf`);
       try {
-        const sz = runGS(inputPath, out, cfg.dpi, cfg.preset);
+        const sz   = runGS(workInput, out, cfg.dpi, cfg.preset);
         const diff = targetBytes - sz;
         console.log(`[${id}] probe dpi=${cfg.dpi} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
-
         if (diff >= 0) {
           loDPI = cfg.dpi;
-          if (diff < bestDiff) { bestDiff = diff; bestOutput = fs.readFileSync(out); }
+          if (diff < bestDiff) { bestDiff=diff; bestOutput=fs.readFileSync(out); }
           if (diff <= TOLERANCE) return sendResult(res, bestOutput, originalSize);
           break;
         } else {
@@ -212,51 +246,49 @@ app.post('/compress', upload.single('pdf'), async (req, res) => {
       }
     }
 
+    // Binary search
     let lo = loDPI, hi = hiDPI;
     console.log(`[${id}] BinSearch dpi=[${lo}-${hi}]`);
 
-    for (let iter = 0; iter < 16; iter++) {
+    for (let iter=0; iter<16; iter++) {
       if (lo > hi) break;
-      const mid = Math.round((lo + hi) / 2);
-      const preset = mid >= 200 ? '/printer' : mid >= 120 ? '/ebook' : '/screen';
-      const out = path.join(tmpDir, `bs${iter}.pdf`);
-
+      const mid    = Math.round((lo+hi)/2);
+      const preset = mid>=200?'/printer':mid>=120?'/ebook':'/screen';
+      const out    = path.join(tmpDir, `bs${iter}.pdf`);
       let sz;
-      try { sz = runGS(inputPath, out, mid, preset); }
-      catch(e) { console.log(`[${id}] bs${iter} err: ${e.message}`); hi = mid-1; continue; }
-
+      try { sz = runGS(workInput, out, mid, preset); }
+      catch(e) { console.log(`[${id}] bs${iter} err: ${e.message}`); hi=mid-1; continue; }
       const diff = targetBytes - sz;
       console.log(`[${id}] bs${iter} dpi=${mid} sz=${fmtKB(sz)} diff=${fmtKB(diff)}`);
-
       if (diff >= 0) {
-        if (diff < bestDiff) { bestDiff = diff; bestOutput = fs.readFileSync(out); }
+        if (diff < bestDiff) { bestDiff=diff; bestOutput=fs.readFileSync(out); }
         if (diff <= TOLERANCE) break;
-        lo = mid + 1;
+        lo = mid+1;
       } else {
-        hi = mid - 1;
+        hi = mid-1;
       }
     }
 
-    if (!bestOutput) return res.status(422).json({ error: 'Could not reach target', originalSize, targetBytes });
-    if (bestOutput.length < MIN_VALID) return res.status(422).json({ error: `Over-compressed: ${fmtKB(bestOutput.length)}` });
+    if (!bestOutput) return res.status(422).json({ error:'Could not reach target', originalSize, targetBytes });
+    if (bestOutput.length < MIN_VALID) return res.status(422).json({ error:`Over-compressed: ${fmtKB(bestOutput.length)}` });
 
-    console.log(`[${id}] ✅ FINAL=${fmtKB(bestOutput.length)} diff=${fmtKB(targetBytes - bestOutput.length)}`);
+    console.log(`[${id}] ✅ FINAL=${fmtKB(bestOutput.length)} diff=${fmtKB(targetBytes-bestOutput.length)}`);
     return sendResult(res, bestOutput, originalSize);
 
   } catch(err) {
     console.error(`[${id}] FATAL:`, err.message);
     res.status(500).json({ error: err.message });
   } finally {
-    if (tmpDir) try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch(_) {}
+    if (tmpDir) try { fs.rmSync(tmpDir,{recursive:true,force:true}); } catch(_) {}
   }
 });
 
 function sendResult(res, buf, originalSize) {
-  res.json({ success: true, pdfBase64: buf.toString('base64'), originalSize, compressedSize: buf.length });
+  res.json({ success:true, pdfBase64:buf.toString('base64'), originalSize, compressedSize:buf.length });
 }
-function fmtKB(b) { return (b/1024).toFixed(1) + 'KB'; }
+function fmtKB(b) { return (b/1024).toFixed(1)+'KB'; }
 
-try { fs.mkdirSync('/app/tmp', { recursive: true }); } catch(_) {}
+try { fs.mkdirSync('/app/tmp',{recursive:true}); } catch(_) {}
 
 app.listen(PORT, () => {
   console.log(`✅ Port ${PORT} | GS: ${checkGS()} | Dir: ${getWritableDir()}`);
